@@ -1,0 +1,17 @@
+line_id,from_stop_id,to_stop_id,travel_time,distance,is_transfer_segment,reliability_factor
+L01O,DEPOT,Z001,12.4,4.3,False,1.08
+L01O,Z001,Z003,9.3,3.9,True,1.01
+L01O,Z003,Z005,10.0,5.0,False,0.99
+L02I,DEPOT,Z005,19.9,2.1,False,1.09
+L02I,Z005,Z003,7.4,1.6,True,1.02
+L02I,Z003,Z001,7.5,2.5,False,0.91
+L03O,DEPOT,Z001,13.6,4.2,False,1.04
+L03O,Z001,Z002,5.0,3.5,True,0.93
+L03O,Z002,Z004,9.4,2.7,False,1.06
+L04I,DEPOT,Z004,17.9,6.5,False,1.0
+L04I,Z004,Z002,11.1,2.4,True,0.94
+L04I,Z002,Z001,7.7,5.0,False,1.05
+L05O,DEPOT,Z001,15.0,4.8,False,0.9
+L05O,Z001,Z003,6.6,1.5,True,1.02
+L05O,Z003,Z004,10.0,3.1,True,0.99
+L05O,Z004,Z005,11.7,1.4,False,1.03

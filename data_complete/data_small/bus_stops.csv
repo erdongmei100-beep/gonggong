@@ -1,0 +1,13 @@
+stop_id,zone_id,capacity,boarding_position,name
+S001,Z001,1,1,City Center Stop 1
+S002,Z001,3,2,City Center Stop 2
+S003,Z001,2,3,City Center Stop 3
+S004,Z002,2,1,University Stop 1
+S005,Z002,2,2,University Stop 2
+S006,Z002,2,3,University Stop 3
+S007,Z003,1,1,Railway Station Stop 1
+S008,Z003,1,2,Railway Station Stop 2
+S009,Z004,1,1,Airport Stop 1
+S010,Z004,3,2,Airport Stop 2
+S011,Z005,1,1,Shopping Mall Stop 1
+S012,Z005,1,2,Shopping Mall Stop 2

@@ -1,0 +1,15 @@
+zone_id,name,dwelling_allowed,location_x,location_y,description,is_major_transfer,max_capacity,has_security,walking_radius_m
+Z001,Plaza_Italia,True,183.8915663596266,316.15291529678973,主要换乘区 - Plaza_Italia,True,5,True,200
+Z002,Central_Station,True,399.1725624922756,75.35877198271473,主要换乘区 - Central_Station,True,5,False,200
+Z003,North_Terminal,True,20.38757077738196,295.4464715941209,主要换乘区 - North_Terminal,True,5,False,200
+Z004,South_Plaza,True,355.5747662190089,404.7505230698577,主要换乘区 - South_Plaza,True,6,True,200
+Z005,East_Hub,True,87.18321450249572,345.46886905123296,主要换乘区 - East_Hub,True,4,True,200
+Z006,West_Gate,True,337.84505851964036,367.6080596203861,主要换乘区 - West_Gate,False,4,True,200
+Z007,University,True,438.6696766904905,128.9708138575778,主要换乘区 - University,False,6,False,200
+Z008,Hospital,True,491.0841716647178,258.31794563550716,主要换乘区 - Hospital,False,3,False,200
+Z009,Shopping_Center,False,46.5513839029496,448.60787897666336,主要换乘区 - Shopping_Center,False,7,True,200
+Z010,Airport,False,94.35355417068969,139.43567629609095,主要换乘区 - Airport,False,5,True,200
+Z011,Park_Center,False,448.5551299762885,443.54321213255866,主要换乘区 - Park_Center,False,3,True,200
+Z012,River_Side,False,42.069982497524414,80.81435704730688,主要换乘区 - River_Side,False,6,True,200
+Z013,Mountain_View,False,186.14138328087154,470.0667212288892,主要换乘区 - Mountain_View,False,3,False,200
+Z014,Valley_Mall,False,80.40402570874933,274.3668946832931,主要换乘区 - Valley_Mall,False,5,True,200

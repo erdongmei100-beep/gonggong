@@ -1,0 +1,6 @@
+line_id,first_departure_minutes,first_departure_time
+L01O,1.0,00:01
+L02I,-0.0,00:00
+L03O,3.0,00:03
+L04I,8.0,00:08
+L05O,4.0,00:04

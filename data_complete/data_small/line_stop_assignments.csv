@@ -1,0 +1,17 @@
+line_id,zone_id,stop_id,stop_sequence,max_dwelling_time,dwell_time_allowed
+L01O,Z001,S001,1,1.0,True
+L01O,Z003,S007,2,3.0,True
+L01O,Z005,S011,3,3.7,True
+L02I,Z005,S011,1,5.0,True
+L02I,Z003,S007,2,3.4,True
+L02I,Z001,S001,3,3.3,True
+L03O,Z001,S001,1,4.5,True
+L03O,Z002,S004,2,4.7,True
+L03O,Z004,S009,3,3.3,False
+L04I,Z004,S009,1,2.3,False
+L04I,Z002,S004,2,3.9,True
+L04I,Z001,S001,3,4.1,True
+L05O,Z001,S001,1,1.7,True
+L05O,Z003,S007,2,2.1,True
+L05O,Z004,S009,3,3.0,False
+L05O,Z005,S011,4,3.7,True

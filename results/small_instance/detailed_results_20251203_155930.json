@@ -1,0 +1,22 @@
+{
+  "timestamp": "20251203_155930",
+  "solve_time_seconds": 0.0019071102142333984,
+  "model_summary": {
+    "line_count": 40,
+    "zone_count": 14,
+    "stop_count": 42,
+    "sync_pair_count": 304,
+    "planning_horizon": 239.0
+  },
+  "solver_results": {
+    "status": "INFEASIBLE",
+    "objective_value": null,
+    "runtime": 0.0,
+    "mip_gap": Infinity,
+    "node_count": 0.0,
+    "synchronization_count": 0,
+    "optimal": false
+  },
+  "timetables": {},
+  "dwell_times": {}
+}
