@@ -48,7 +48,7 @@ def main():
         print(f"  线路数量: {len(data.lines)}")
         print(f"  换乘区数量: {len(data.transfer_zones)}")
         print(f"  站点数量: {len(data.bus_stops)}")
-        print(f"  同步对数: {len(data.sync_pairs)}")
+        print(f"  同步对数: {len(data.synchronization_pairs)}")
         print(f"  计划时段: {data.planning_horizon} 分钟")
     except Exception as e:
         print(f"✗ 数据加载失败: {e}")

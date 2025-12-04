@@ -85,7 +85,7 @@ class SmallInstanceRunner:
         print(f"  换乘区数量: {len(data.transfer_zones)}")
         print(f"  站点数量: {len(data.bus_stops)}")
         print(f"  线路-站点分配记录: {len(data.line_stop_assignments)}")
-        print(f"  同步对数量: {len(data.sync_pairs)}")
+        print(f"  同步对数量: {len(data.synchronization_pairs)}")
         print(f"  计划时段长度: {data.model_parameters.planning_horizon} 分钟")
 
         # 打印线路信息
@@ -197,7 +197,7 @@ class SmallInstanceRunner:
                 "line_count": len(data.lines),
                 "zone_count": len(data.transfer_zones),
                 "stop_count": len(data.bus_stops),
-                "sync_pair_count": len(data.sync_pairs),
+                "sync_pair_count": len(data.synchronization_pairs),
                 "planning_horizon": data.planning_horizon
             },
             "solver_results": {
@@ -312,9 +312,9 @@ class SmallInstanceRunner:
         # 实际应该有一个真实的基准时刻表
         total_possible_pairs = 0
 
-        for (line_i, line_j, zone_id), pair in data.sync_pairs.items():
-            f_i = data.lines[line_i].frequency
-            f_j = data.lines[line_j].frequency
+        for pair in data.synchronization_pairs:
+            f_i = data.lines[pair.line_i].frequency
+            f_j = data.lines[pair.line_j].frequency
             total_possible_pairs += f_i * f_j
 
         # 假设有5%的同步概率（完全随机）
@@ -325,7 +325,8 @@ class SmallInstanceRunner:
         print("\n按换乘区同步统计:")
 
         zone_stats = {}
-        for (line_i, line_j, zone_id), pair in data.sync_pairs.items():
+        for pair in data.synchronization_pairs:
+            zone_id = pair.zone_id
             if zone_id not in zone_stats:
                 zone_stats[zone_id] = {
                     'total_pairs': 0,
@@ -334,12 +335,12 @@ class SmallInstanceRunner:
                 }
 
             # 统计线路
-            zone_stats[zone_id]['lines'].add(line_i)
-            zone_stats[zone_id]['lines'].add(line_j)
+            zone_stats[zone_id]['lines'].add(pair.line_i)
+            zone_stats[zone_id]['lines'].add(pair.line_j)
 
             # 统计可能的同步对
-            f_i = data.lines[line_i].frequency
-            f_j = data.lines[line_j].frequency
+            f_i = data.lines[pair.line_i].frequency
+            f_j = data.lines[pair.line_j].frequency
             zone_stats[zone_id]['total_pairs'] += f_i * f_j
 
         # 计算实际的同步次数（需要从结果中提取，这里简化）
