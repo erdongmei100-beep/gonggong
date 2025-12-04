@@ -60,7 +60,16 @@ class BSTDTDataLoader:
         service_constraints = self._parse_service_constraints(service_constraints_df)
         model_parameters = self._parse_model_parameters(model_params_df)
 
-        stop_zone_map = {stop_id: stop.zone_id for stop_id, stop in stops.items()}
+        stop_zone_map: Dict[str, str] = {}
+        for stop_id, stop in stops.items():
+            cleaned_id = stop_id.strip()
+            stop_zone_map[cleaned_id] = stop.zone_id
+            lower_id = cleaned_id.lower()
+            upper_id = cleaned_id.upper()
+            if lower_id not in stop_zone_map:
+                stop_zone_map[lower_id] = stop.zone_id
+            if upper_id not in stop_zone_map:
+                stop_zone_map[upper_id] = stop.zone_id
         line_zone_sequence = self._build_zone_sequences(assignments)
         travel_time_map, base_travel = self._build_travel_time_map(travel_times, stop_zone_map, set(lines.keys()))
         num_trips_by_line = self._compute_trip_counts(lines, model_parameters.planning_horizon)
@@ -109,10 +118,10 @@ class BSTDTDataLoader:
     def _parse_bus_stops(self, df: pd.DataFrame) -> Dict[str, BusStop]:
         stops: Dict[str, BusStop] = {}
         for _, row in df.iterrows():
-            stop_id = str(row["stop_id"])
+            stop_id = str(row["stop_id"]).strip()
             stops[stop_id] = BusStop(
                 stop_id=stop_id,
-                zone_id=str(row["zone_id"]),
+                zone_id=str(row["zone_id"]).strip(),
                 name=str(row.get("name", "")),
                 capacity=int(row.get("capacity", 0)),
                 boarding_position=int(row.get("boarding_position", 1)),
@@ -123,9 +132,9 @@ class BSTDTDataLoader:
         assignments: Dict[Tuple[str, str, str], LineStopAssignment] = {}
         for _, row in df.iterrows():
             assignment = LineStopAssignment(
-                line_id=str(row["line_id"]),
-                zone_id=str(row["zone_id"]),
-                stop_id=str(row["stop_id"]),
+                line_id=str(row["line_id"]).strip(),
+                zone_id=str(row["zone_id"]).strip(),
+                stop_id=str(row["stop_id"]).strip(),
                 stop_sequence=int(row["stop_sequence"]),
                 dwell_time_allowed=bool(row.get("dwell_time_allowed", True)),
                 max_dwelling_time=float(row.get("max_dwelling_time", 0.0)),
@@ -144,9 +153,9 @@ class BSTDTDataLoader:
         for _, row in working_df.iterrows():
             travel_times.append(
                 TravelTimeEntry(
-                    line_id=str(row["line_id"]),
-                    from_stop_id=str(row.get("from_stop_id", "DEPOT") or "DEPOT"),
-                    to_stop_id=str(row.get("to_stop_id", "")),
+                    line_id=str(row["line_id"]).strip(),
+                    from_stop_id=str(row.get("from_stop_id", "DEPOT") or "DEPOT").strip(),
+                    to_stop_id=str(row.get("to_stop_id", "")).strip(),
                     travel_time=float(row["travel_time"]),
                 )
             )
@@ -224,6 +233,8 @@ class BSTDTDataLoader:
         for entry in travel_times:
             by_line.setdefault(entry.line_id, []).append(entry)
 
+        first_zone_lookup_debugged = False
+
         for line_id, entries in by_line.items():
             if line_id not in known_lines:
                 logger.warning("Travel time provided for unknown line %s", line_id)
@@ -251,9 +262,26 @@ class BSTDTDataLoader:
 
             base_travel[line_id] = max(cumulative.values())
             for stop_id, time_val in cumulative.items():
-                zone_id = stop_zone_map.get(stop_id)
+                stop_id_clean = str(stop_id).strip()
+                zone_id = stop_zone_map.get(stop_id_clean)
                 if zone_id is None:
-                    logger.warning("Stop %s missing zone mapping; skipping travel time", stop_id)
+                    normalized = stop_id_clean.lower()
+                    if normalized in stop_zone_map:
+                        zone_id = stop_zone_map[normalized]
+                    else:
+                        normalized = stop_id_clean.upper()
+                        if normalized in stop_zone_map:
+                            zone_id = stop_zone_map[normalized]
+                if zone_id is None:
+                    if not first_zone_lookup_debugged:
+                        logger.debug(
+                            "Stop '%s' in travel_times for line %s not found in bus_stops map (available sample: %s)",
+                            stop_id_clean,
+                            line_id,
+                            list(stop_zone_map.keys())[:5],
+                        )
+                        first_zone_lookup_debugged = True
+                    logger.warning("Stop %s missing zone mapping; skipping travel time", stop_id_clean)
                     continue
                 key = (line_id, zone_id)
                 if key not in travel_time_map or time_val < travel_time_map[key]:
