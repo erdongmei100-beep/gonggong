@@ -14,6 +14,7 @@ class BusLine:
 
     line_id: str
     headway: float
+    frequency: int
     name: str = ""
     direction: str = ""
     depot_location_x: float = 0.0
