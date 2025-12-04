@@ -60,16 +60,9 @@ class BSTDTDataLoader:
         service_constraints = self._parse_service_constraints(service_constraints_df)
         model_parameters = self._parse_model_parameters(model_params_df)
 
-        stop_zone_map: Dict[str, str] = {}
-        for stop_id, stop in stops.items():
-            cleaned_id = stop_id.strip()
-            stop_zone_map[cleaned_id] = stop.zone_id
-            lower_id = cleaned_id.lower()
-            upper_id = cleaned_id.upper()
-            if lower_id not in stop_zone_map:
-                stop_zone_map[lower_id] = stop.zone_id
-            if upper_id not in stop_zone_map:
-                stop_zone_map[upper_id] = stop.zone_id
+        stop_zone_map: Dict[str, str] = {
+            stop_id.strip(): stop.zone_id.strip() for stop_id, stop in stops.items()
+        }
         line_zone_sequence = self._build_zone_sequences(assignments)
         travel_time_map, base_travel = self._build_travel_time_map(travel_times, stop_zone_map, set(lines.keys()))
         num_trips_by_line = self._compute_trip_counts(lines, model_parameters.planning_horizon)
@@ -96,6 +89,7 @@ class BSTDTDataLoader:
             lines[line_id] = BusLine(
                 line_id=line_id,
                 headway=float(row["headway"]),
+                frequency=int(row["frequency"]),
                 name=str(row.get("name", "")),
                 direction=str(row.get("direction", "")),
                 depot_location_x=float(row.get("depot_location_x", 0.0)),
@@ -265,14 +259,6 @@ class BSTDTDataLoader:
                 stop_id_clean = str(stop_id).strip()
                 zone_id = stop_zone_map.get(stop_id_clean)
                 if zone_id is None:
-                    normalized = stop_id_clean.lower()
-                    if normalized in stop_zone_map:
-                        zone_id = stop_zone_map[normalized]
-                    else:
-                        normalized = stop_id_clean.upper()
-                        if normalized in stop_zone_map:
-                            zone_id = stop_zone_map[normalized]
-                if zone_id is None:
                     if not first_zone_lookup_debugged:
                         logger.debug(
                             "Stop '%s' in travel_times for line %s not found in bus_stops map (available sample: %s)",
@@ -281,7 +267,9 @@ class BSTDTDataLoader:
                             list(stop_zone_map.keys())[:5],
                         )
                         first_zone_lookup_debugged = True
-                    logger.warning("Stop %s missing zone mapping; skipping travel time", stop_id_clean)
+                    logger.warning(
+                        "Stop %s missing zone mapping; skipping travel time", stop_id_clean
+                    )
                     continue
                 key = (line_id, zone_id)
                 if key not in travel_time_map or time_val < travel_time_map[key]:
