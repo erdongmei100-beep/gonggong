@@ -9,6 +9,7 @@ from pathlib import Path
 import time
 import json
 import argparse
+from gurobipy import GRB
 from src.config import get_small_instance_config
 from src.data_loader import BSTDTDataLoader
 
@@ -97,9 +98,11 @@ class SmallInstanceRunner:
 
         # 打印换乘区信息
         print(f"\n  换乘区详细信息:")
-        #for zone_id, zone in list(data.transfer_zones.items())[:3]:  # 只显示前3个换乘区
-            #print(f"    {zone_id}: 允许停留={zone.dwelling_allowed}, "
-                 # f"站点数={len(zone.bus_stops)}")
+        for zone_id, zone in list(data.transfer_zones.items())[:3]:  # 只显示前3个换乘区
+            print(
+                f"    {zone_id}: 允许停留={zone.dwelling_allowed}, "
+                f"最大容量={zone.max_capacity}"
+            )
         if len(data.transfer_zones) > 3:
             print(f"    ... 还有 {len(data.transfer_zones) - 3} 个换乘区")
 
@@ -145,40 +148,71 @@ class SmallInstanceRunner:
 
         return config
 
-    def build_and_solve(self, data: ModelData, config: BSTDTConfig) -> dict:
+    def build_and_solve(self, data: ModelData, config: BSTDTConfig):
         """构建并求解模型"""
-        print("\n" + "=" * 60)
+        print("\n" + "="*60)
         print("步骤 3: 构建和求解模型")
-        print("=" * 60)
+        print("="*60)
 
-        try:
-            # 创建模型实例 - 传入 config
-            print("创建BST-DT模型实例...")
-            model = BSTDT_Model(data, config, model_name="BST-DT_Small_Instance")  # 传入 config
+        # 1. Instantiate Model (Correct: No extra args)
+        print("创建BST-DT模型实例...")
+        model = BSTDT_Model(data, config)
 
-            # 构建模型
-            print("构建模型（创建变量、约束和目标函数）...")
-            model.build_model(
-                include_capacity_constraints=config.constraints.use_bus_capacity_constraints,
-                include_valid_inequalities=config.constraints.use_valid_inequalities
-            )
+        # 2. Build Model (Correct: No extra args)
+        print("构建模型...")
+        model.build_model()
 
-            # 求解模型
-            print("开始求解模型...")
-            start_time = time.time()
-            results = model.solve()
-            solve_time = time.time() - start_time
+        # 3. RUN OPTIMIZATION (Crucial Fix)
+        print("开始调用 Gurobi 求解器...")
+        # Access the internal Gurobi object 'm' directly
+        model.m.optimize()
 
-            # 保存详细结果
-            self._save_detailed_results(results, data, solve_time)
+        # 4. Check Status & Save Results (Crucial Fix: Use 'm' instead of 'model')
+        if model.m.Status == GRB.OPTIMAL:
+            print(f"\n✓ 找到最优解! 目标值 = {model.m.ObjVal}")
+            self._save_results(model.m, data)
+            
+        elif model.m.Status == GRB.TIME_LIMIT:
+            print(f"\n! 达到时间限制. 当前最优目标值 = {model.m.ObjVal}")
+            self._save_results(model.m, data)
+            
+        elif model.m.Status == GRB.INFEASIBLE:
+            print("\n✗ 模型不可行 (Infeasible)。正在计算 IIS...")
+            model.m.computeIIS()
+            model.m.write(os.path.join(self.results_dir, "model_iis.ilp"))
+            print(f"  IIS 文件已保存至: {self.results_dir}")
+            
+        else:
+            print(f"\n✗ 求解结束，状态码: {model.m.Status}")
 
-            return results
+    def _collect_results(self, model: BSTDT_Model, solve_time: float | None = None) -> dict:
+        solver_model = model.m if hasattr(model, "m") else getattr(model, "model", None)
+        if solver_model is None:
+            return {}
 
-        except Exception as e:
-            print(f"模型求解失败: {e}")
-            import traceback
-            traceback.print_exc()
-            return None
+        has_solution = solver_model.SolCount > 0
+        results = {
+            'status': solver_model.Status,
+            'objective_value': solver_model.ObjVal if has_solution else None,
+            'runtime': solver_model.Runtime,
+            'solve_time_seconds': solve_time,
+            'mip_gap': solver_model.MIPGap if solver_model.Status in (GRB.OPTIMAL, GRB.TIME_LIMIT) else None,
+            'node_count': solver_model.NodeCount,
+            'solution_count': solver_model.SolCount,
+            'optimal': solver_model.Status == GRB.OPTIMAL,
+        }
+
+        if has_solution and hasattr(self, "_latest_model") and self._latest_model is model:
+            results.update({
+                'timetables': self._extract_timetables(model),
+                'dwell_times': self._extract_dwell_times(model),
+            })
+
+        return results
+
+    def _save_results(self, solver_model, data: ModelData, results: dict | None = None, solve_time: float | None = None):
+        if results:
+            self._save_detailed_results(results, data, solve_time or results.get('runtime', 0.0))
 
     def _save_detailed_results(self, results: dict, data: ModelData, solve_time: float):
         """保存详细结果"""
@@ -221,6 +255,31 @@ class SmallInstanceRunner:
 
         # 也保存一个简化的CSV格式时刻表
         self._save_timetable_csv(results.get('timetables', {}))
+
+    def _extract_timetables(self, model: BSTDT_Model) -> dict:
+        """从模型变量中提取时刻表信息"""
+        timetables = {}
+        for line_id, first_departure_var in model.X.items():
+            timetable = {
+                'first_departure': first_departure_var.X,
+                'arrival_times': {}
+            }
+
+            for (l_id, trip, zone_id), arrival_var in model.T.items():
+                if l_id != line_id:
+                    continue
+                timetable['arrival_times'][f"{zone_id}_{trip}"] = arrival_var.X
+
+            timetables[line_id] = timetable
+
+        return timetables
+
+    def _extract_dwell_times(self, model: BSTDT_Model) -> dict:
+        """从模型变量中提取停留时间"""
+        dwell_times = {}
+        for (line_id, zone_id), dwell_var in model.Z.items():
+            dwell_times.setdefault(line_id, {})[zone_id] = dwell_var.X
+        return dwell_times
 
     def _save_timetable_csv(self, timetables: dict):
         """保存时刻表为CSV格式"""
