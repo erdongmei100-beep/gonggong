@@ -158,10 +158,7 @@ class SmallInstanceRunner:
 
             # 构建模型
             print("构建模型（创建变量、约束和目标函数）...")
-            model.build_model(
-                include_capacity_constraints=config.constraints.use_bus_capacity_constraints,
-                include_valid_inequalities=config.constraints.use_valid_inequalities
-            )
+            model.build_model()
 
             # 求解模型
             print("开始求解模型...")
