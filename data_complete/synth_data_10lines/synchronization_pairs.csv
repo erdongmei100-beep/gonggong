@@ -1,0 +1,11 @@
+line_i,line_j,zone_id,min_sync_window,max_sync_window,sync_weight
+L01O,L02O,Z2,0,10,1
+L02O,L03O,Z2,0,10,1
+L03O,L04O,Z3,0,10,1
+L04O,L05O,Z3,0,10,1
+L05O,L06O,Z4,0,10,1
+L06O,L07O,Z4,0,10,1
+L07O,L08O,Z5,0,10,1
+L08O,L09O,Z5,0,10,1
+L09O,L10O,Z1,0,10,1
+L10O,L01O,Z1,0,10,1

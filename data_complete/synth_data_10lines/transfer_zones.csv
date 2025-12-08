@@ -1,0 +1,6 @@
+zone_id,dwelling_allowed,location_x,location_y,is_major_transfer
+Z1,True,2,2,True
+Z2,True,4,4,True
+Z3,True,6,6,True
+Z4,True,8,8,True
+Z5,True,10,10,True
