@@ -214,6 +214,35 @@ class SmallInstanceRunner:
         if results:
             self._save_detailed_results(results, data, solve_time or results.get('runtime', 0.0))
 
+    def _collect_results(self, model: BSTDT_Model, solve_time: float | None = None) -> dict:
+        solver_model = model.m if hasattr(model, "m") else getattr(model, "model", None)
+        if solver_model is None:
+            return {}
+
+        has_solution = solver_model.SolCount > 0
+        results = {
+            'status': solver_model.Status,
+            'objective_value': solver_model.ObjVal if has_solution else None,
+            'runtime': solver_model.Runtime,
+            'solve_time_seconds': solve_time,
+            'mip_gap': solver_model.MIPGap if solver_model.Status in (GRB.OPTIMAL, GRB.TIME_LIMIT) else None,
+            'node_count': solver_model.NodeCount,
+            'solution_count': solver_model.SolCount,
+            'optimal': solver_model.Status == GRB.OPTIMAL,
+        }
+
+        if has_solution and hasattr(self, "_latest_model") and self._latest_model is model:
+            results.update({
+                'timetables': self._extract_timetables(model),
+                'dwell_times': self._extract_dwell_times(model),
+            })
+
+        return results
+
+    def _save_results(self, solver_model, data: ModelData, results: dict, solve_time: float | None = None):
+        if results:
+            self._save_detailed_results(results, data, solve_time or results.get('runtime', 0.0))
+
     def _save_detailed_results(self, results: dict, data: ModelData, solve_time: float):
         """保存详细结果"""
         if not results or 'objective_value' not in results:
