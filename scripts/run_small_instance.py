@@ -154,36 +154,48 @@ class SmallInstanceRunner:
         print("步骤 3: 构建和求解模型")
         print("="*60)
 
-        # 1. Instantiate and Build
         print("创建BST-DT模型实例...")
         model = BSTDT_Model(data, config)
         
         print("构建模型...")
         model.build_model()
 
-        # 2. DYNAMICALLY FIND THE GUROBI OBJECT (Crucial Fix)
+        # --- DYNAMICALLY FIND THE GUROBI OBJECT ---
         gurobi_solver = None
         # Priority list of likely attribute names
-        possible_names = ['m', 'model', '_model', 'solver', 'gmodel']
+        possible_names = ['m', 'model', '_model', 'solver', 'gmodel', 'gurobi_model']
         
         print("正在定位 Gurobi 求解器对象...")
+        found_name = None
         for name in possible_names:
             if hasattr(model, name):
                 gurobi_solver = getattr(model, name)
+                found_name = name
                 print(f"✓ 成功定位: Gurobi 对象位于 'model.{name}'")
                 break
         
-        # Fallback: If still not found, check __dict__ or fail gracefully
+        # If standard names fail, search __dict__ for any gurobipy.Model object
+        if gurobi_solver is None:
+            print("尝试深度搜索...")
+            for attr_name, attr_val in model.__dict__.items():
+                # Check if it looks like a Gurobi model (has .optimize method)
+                if hasattr(attr_val, 'optimize') and hasattr(attr_val, 'Status'):
+                    gurobi_solver = attr_val
+                    found_name = attr_name
+                    print(f"✓ 深度搜索定位: Gurobi 对象位于 'model.{attr_name}'")
+                    break
+
+        # CRITICAL FALLBACK
         if gurobi_solver is None:
             print("\n[CRITICAL ERROR] 无法在 BSTDT_Model 中找到 Gurobi 对象。")
-            print("可用属性列表:", dir(model))
-            raise AttributeError("无法找到 Gurobi 模型对象 (Gurobi model object not found)")
+            print("现有属性列表 (Attributes):", dir(model))
+            raise AttributeError("无法找到 Gurobi 模型对象，请检查 model 类的定义。")
 
-        # 3. RUN OPTIMIZATION
-        print("开始调用 Gurobi 求解器...")
+        # --- RUN OPTIMIZATION ---
+        print(f"开始调用 Gurobi 求解器 (使用 {found_name})...")
         gurobi_solver.optimize()
 
-        # 4. Check Status & Save Results (Use found object)
+        # --- CHECK RESULTS ---
         if gurobi_solver.Status == GRB.OPTIMAL:
             print(f"\n✓ 找到最优解! 目标值 = {gurobi_solver.ObjVal}")
             self._save_results(gurobi_solver, data)
@@ -194,10 +206,12 @@ class SmallInstanceRunner:
             
         elif gurobi_solver.Status == GRB.INFEASIBLE:
             print("\n✗ 模型不可行 (Infeasible)。正在计算 IIS...")
-            gurobi_solver.computeIIS()
-            iis_path = os.path.join(self.results_dir, "model_iis.ilp")
-            gurobi_solver.write(iis_path)
-            print(f"  IIS 文件已保存至: {iis_path}")
+            try:
+                gurobi_solver.computeIIS()
+                gurobi_solver.write(os.path.join(self.results_dir, "model_iis.ilp"))
+                print("  IIS 文件已保存。")
+            except:
+                print("  无法计算 IIS (可能模型未完全构建)。")
             
         else:
             print(f"\n✗ 求解结束，状态码: {gurobi_solver.Status}")
