@@ -9,6 +9,7 @@ from pathlib import Path
 import time
 import json
 import argparse
+from gurobipy import GRB
 from src.config import get_small_instance_config
 from src.data_loader import BSTDTDataLoader
 
@@ -154,20 +155,35 @@ class SmallInstanceRunner:
         try:
             # 创建模型实例 - 传入 config
             print("创建BST-DT模型实例...")
-            model = BSTDT_Model(data, config, model_name="BST-DT_Small_Instance")  # 传入 config
+            model = BSTDT_Model(data, config)  # 传入 config
 
             # 构建模型
             print("构建模型（创建变量、约束和目标函数）...")
-            model.build_model(
-                include_capacity_constraints=config.constraints.use_bus_capacity_constraints,
-                include_valid_inequalities=config.constraints.use_valid_inequalities
-            )
+            gurobi_model = model.build_model()
 
             # 求解模型
             print("开始求解模型...")
             start_time = time.time()
-            results = model.solve()
+            gurobi_model.optimize()
             solve_time = time.time() - start_time
+
+            status = gurobi_model.Status
+            has_solution = gurobi_model.SolCount > 0
+            results = {
+                'status': status,
+                'objective_value': gurobi_model.ObjVal if has_solution else None,
+                'runtime': gurobi_model.Runtime,
+                'mip_gap': gurobi_model.MIPGap if status in (GRB.OPTIMAL, GRB.TIME_LIMIT) else None,
+                'node_count': gurobi_model.NodeCount,
+                'solution_count': gurobi_model.SolCount,
+                'optimal': status == GRB.OPTIMAL,
+            }
+
+            if has_solution:
+                results.update({
+                    'timetables': self._extract_timetables(model),
+                    'dwell_times': self._extract_dwell_times(model),
+                })
 
             # 保存详细结果
             self._save_detailed_results(results, data, solve_time)
@@ -221,6 +237,31 @@ class SmallInstanceRunner:
 
         # 也保存一个简化的CSV格式时刻表
         self._save_timetable_csv(results.get('timetables', {}))
+
+    def _extract_timetables(self, model: BSTDT_Model) -> dict:
+        """从模型变量中提取时刻表信息"""
+        timetables = {}
+        for line_id, first_departure_var in model.X.items():
+            timetable = {
+                'first_departure': first_departure_var.X,
+                'arrival_times': {}
+            }
+
+            for (l_id, trip, zone_id), arrival_var in model.T.items():
+                if l_id != line_id:
+                    continue
+                timetable['arrival_times'][f"{zone_id}_{trip}"] = arrival_var.X
+
+            timetables[line_id] = timetable
+
+        return timetables
+
+    def _extract_dwell_times(self, model: BSTDT_Model) -> dict:
+        """从模型变量中提取停留时间"""
+        dwell_times = {}
+        for (line_id, zone_id), dwell_var in model.Z.items():
+            dwell_times.setdefault(line_id, {})[zone_id] = dwell_var.X
+        return dwell_times
 
     def _save_timetable_csv(self, timetables: dict):
         """保存时刻表为CSV格式"""
