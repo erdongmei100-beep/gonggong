@@ -97,9 +97,9 @@ class SmallInstanceRunner:
 
         # 打印换乘区信息
         print(f"\n  换乘区详细信息:")
-        for zone_id, zone in list(data.transfer_zones.items())[:3]:  # 只显示前3个换乘区
-            print(f"    {zone_id}: 允许停留={zone.dwelling_allowed}, "
-                  f"站点数={len(zone.bus_stops)}")
+        #for zone_id, zone in list(data.transfer_zones.items())[:3]:  # 只显示前3个换乘区
+            #print(f"    {zone_id}: 允许停留={zone.dwelling_allowed}, "
+                 # f"站点数={len(zone.bus_stops)}")
         if len(data.transfer_zones) > 3:
             print(f"    ... 还有 {len(data.transfer_zones) - 3} 个换乘区")
 
