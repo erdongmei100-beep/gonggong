@@ -159,23 +159,26 @@ class SmallInstanceRunner:
 
             # 构建模型
             print("构建模型（创建变量、约束和目标函数）...")
-            gurobi_model = model.build_model()
+            model.build_model()
+
+            if model.model is None:
+                raise RuntimeError("Gurobi 模型未成功创建")
 
             # 求解模型
             print("开始求解模型...")
             start_time = time.time()
-            gurobi_model.optimize()
+            model.model.optimize()
             solve_time = time.time() - start_time
 
-            status = gurobi_model.Status
-            has_solution = gurobi_model.SolCount > 0
+            status = model.model.Status
+            has_solution = model.model.SolCount > 0
             results = {
                 'status': status,
-                'objective_value': gurobi_model.ObjVal if has_solution else None,
-                'runtime': gurobi_model.Runtime,
-                'mip_gap': gurobi_model.MIPGap if status in (GRB.OPTIMAL, GRB.TIME_LIMIT) else None,
-                'node_count': gurobi_model.NodeCount,
-                'solution_count': gurobi_model.SolCount,
+                'objective_value': model.model.ObjVal if has_solution else None,
+                'runtime': model.model.Runtime,
+                'mip_gap': model.model.MIPGap if status in (GRB.OPTIMAL, GRB.TIME_LIMIT) else None,
+                'node_count': model.model.NodeCount,
+                'solution_count': model.model.SolCount,
                 'optimal': status == GRB.OPTIMAL,
             }
 
