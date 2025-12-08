@@ -154,7 +154,7 @@ class SmallInstanceRunner:
         try:
             # 创建模型实例 - 传入 config
             print("创建BST-DT模型实例...")
-            model = BSTDT_Model(data, config, model_name="BST-DT_Small_Instance")  # 传入 config
+            model = BSTDT_Model(data, config)  # 传入 config
 
             # 构建模型
             print("构建模型（创建变量、约束和目标函数）...")
