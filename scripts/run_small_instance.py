@@ -154,36 +154,53 @@ class SmallInstanceRunner:
         print("步骤 3: 构建和求解模型")
         print("="*60)
 
-        # 1. Instantiate Model (Correct: No extra args)
+        # 1. Instantiate and Build
         print("创建BST-DT模型实例...")
         model = BSTDT_Model(data, config)
-
-        # 2. Build Model (Correct: No extra args)
+        
         print("构建模型...")
         model.build_model()
 
-        # 3. RUN OPTIMIZATION (Crucial Fix)
-        print("开始调用 Gurobi 求解器...")
-        # Access the internal Gurobi object 'm' directly
-        model.m.optimize()
+        # 2. DYNAMICALLY FIND THE GUROBI OBJECT (Crucial Fix)
+        gurobi_solver = None
+        # Priority list of likely attribute names
+        possible_names = ['m', 'model', '_model', 'solver', 'gmodel']
+        
+        print("正在定位 Gurobi 求解器对象...")
+        for name in possible_names:
+            if hasattr(model, name):
+                gurobi_solver = getattr(model, name)
+                print(f"✓ 成功定位: Gurobi 对象位于 'model.{name}'")
+                break
+        
+        # Fallback: If still not found, check __dict__ or fail gracefully
+        if gurobi_solver is None:
+            print("\n[CRITICAL ERROR] 无法在 BSTDT_Model 中找到 Gurobi 对象。")
+            print("可用属性列表:", dir(model))
+            raise AttributeError("无法找到 Gurobi 模型对象 (Gurobi model object not found)")
 
-        # 4. Check Status & Save Results (Crucial Fix: Use 'm' instead of 'model')
-        if model.m.Status == GRB.OPTIMAL:
-            print(f"\n✓ 找到最优解! 目标值 = {model.m.ObjVal}")
-            self._save_results(model.m, data)
+        # 3. RUN OPTIMIZATION
+        print("开始调用 Gurobi 求解器...")
+        gurobi_solver.optimize()
+
+        # 4. Check Status & Save Results (Use found object)
+        if gurobi_solver.Status == GRB.OPTIMAL:
+            print(f"\n✓ 找到最优解! 目标值 = {gurobi_solver.ObjVal}")
+            self._save_results(gurobi_solver, data)
             
-        elif model.m.Status == GRB.TIME_LIMIT:
-            print(f"\n! 达到时间限制. 当前最优目标值 = {model.m.ObjVal}")
-            self._save_results(model.m, data)
+        elif gurobi_solver.Status == GRB.TIME_LIMIT:
+            print(f"\n! 达到时间限制. 当前最优目标值 = {gurobi_solver.ObjVal}")
+            self._save_results(gurobi_solver, data)
             
-        elif model.m.Status == GRB.INFEASIBLE:
+        elif gurobi_solver.Status == GRB.INFEASIBLE:
             print("\n✗ 模型不可行 (Infeasible)。正在计算 IIS...")
-            model.m.computeIIS()
-            model.m.write(os.path.join(self.results_dir, "model_iis.ilp"))
-            print(f"  IIS 文件已保存至: {self.results_dir}")
+            gurobi_solver.computeIIS()
+            iis_path = os.path.join(self.results_dir, "model_iis.ilp")
+            gurobi_solver.write(iis_path)
+            print(f"  IIS 文件已保存至: {iis_path}")
             
         else:
-            print(f"\n✗ 求解结束，状态码: {model.m.Status}")
+            print(f"\n✗ 求解结束，状态码: {gurobi_solver.Status}")
 
     def _collect_results(self, model: BSTDT_Model, solve_time: float | None = None) -> dict:
         solver_model = model.m if hasattr(model, "m") else getattr(model, "model", None)
@@ -211,35 +228,6 @@ class SmallInstanceRunner:
         return results
 
     def _save_results(self, solver_model, data: ModelData, results: dict | None = None, solve_time: float | None = None):
-        if results:
-            self._save_detailed_results(results, data, solve_time or results.get('runtime', 0.0))
-
-    def _collect_results(self, model: BSTDT_Model, solve_time: float | None = None) -> dict:
-        solver_model = model.m if hasattr(model, "m") else getattr(model, "model", None)
-        if solver_model is None:
-            return {}
-
-        has_solution = solver_model.SolCount > 0
-        results = {
-            'status': solver_model.Status,
-            'objective_value': solver_model.ObjVal if has_solution else None,
-            'runtime': solver_model.Runtime,
-            'solve_time_seconds': solve_time,
-            'mip_gap': solver_model.MIPGap if solver_model.Status in (GRB.OPTIMAL, GRB.TIME_LIMIT) else None,
-            'node_count': solver_model.NodeCount,
-            'solution_count': solver_model.SolCount,
-            'optimal': solver_model.Status == GRB.OPTIMAL,
-        }
-
-        if has_solution and hasattr(self, "_latest_model") and self._latest_model is model:
-            results.update({
-                'timetables': self._extract_timetables(model),
-                'dwell_times': self._extract_dwell_times(model),
-            })
-
-        return results
-
-    def _save_results(self, solver_model, data: ModelData, results: dict, solve_time: float | None = None):
         if results:
             self._save_detailed_results(results, data, solve_time or results.get('runtime', 0.0))
 
