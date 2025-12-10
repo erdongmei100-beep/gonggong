@@ -160,11 +160,110 @@ class BSTDT_Small_Runner:
         return results
 
     def _save_results(self, solver_model, data: ModelData, results: dict | None = None, solve_time: float | None = None):
-        if results is None:
-            results = self._parse_solver_results(solver_model)
+        """Parse solver variables and save detailed outputs."""
 
-        if results:
-            self._save_detailed_results(results, data, solve_time or results.get('runtime', 0.0))
+        if solver_model is None:
+            print("没有可用的求解模型，无法保存结果")
+            return
+
+        has_solution = getattr(solver_model, "SolCount", 0) > 0
+        parsed_results = results.copy() if results else {}
+
+        parsed_results.setdefault("status", getattr(solver_model, "Status", None))
+        parsed_results.setdefault("objective_value", solver_model.ObjVal if has_solution else None)
+        parsed_results.setdefault("runtime", getattr(solver_model, "Runtime", None))
+        parsed_results.setdefault("mip_gap", getattr(solver_model, "MIPGap", None))
+        parsed_results.setdefault("node_count", getattr(solver_model, "NodeCount", None))
+        parsed_results.setdefault("optimal", getattr(solver_model, "Status", None) == GRB.OPTIMAL)
+
+        timetables: dict[str, dict] = {}
+        dwell_times: dict[str, dict] = {}
+
+        def parse_bracketed(name: str):
+            inner = name[name.index("[") + 1 : name.rindex("]")]
+            return inner.split(",")
+
+        def parse_underscored(name: str, expected_parts: int):
+            pieces = name.split("_")
+            if len(pieces) < expected_parts:
+                return None
+            var_type = pieces[0]
+            zone = pieces[-1]
+            if var_type == "T":
+                trip = pieces[-2]
+                line = "_".join(pieces[1:-2])
+                return line, trip, zone
+            if var_type == "Z":
+                line = "_".join(pieces[1:-1])
+                return line, zone
+            if var_type == "X":
+                line = "_".join(pieces[1:])
+                return line,
+            return None
+
+        for var in getattr(solver_model, "getVars", lambda: [])():
+            name = getattr(var, "VarName", "")
+            if name.startswith("T[") and name.endswith("]"):
+                parts = parse_bracketed(name)
+                if len(parts) == 3:
+                    line_id, trip_id, zone_id = parts
+                else:
+                    continue
+            elif name.startswith("T_"):
+                parsed = parse_underscored(name, 4)
+                if not parsed:
+                    continue
+                line_id, trip_id, zone_id = parsed
+            else:
+                line_id = trip_id = zone_id = None
+
+            if line_id is not None:
+                timetable = timetables.setdefault(line_id, {"first_departure": None, "arrival_times": {}})
+                timetable["arrival_times"][f"{zone_id}_{trip_id}"] = var.X
+                continue
+
+            if name.startswith("Z[") and name.endswith("]"):
+                parts = parse_bracketed(name)
+                if len(parts) == 2:
+                    line_id, zone_id = parts
+                else:
+                    continue
+            elif name.startswith("Z_"):
+                parsed = parse_underscored(name, 3)
+                if not parsed:
+                    continue
+                line_id, zone_id = parsed
+            else:
+                line_id = zone_id = None
+
+            if line_id is not None:
+                dwell_times.setdefault(line_id, {})[zone_id] = var.X
+                continue
+
+            if name.startswith("X[") and name.endswith("]"):
+                parts = parse_bracketed(name)
+                if len(parts) == 1:
+                    line_id = parts[0]
+                else:
+                    continue
+            elif name.startswith("X_"):
+                parsed = parse_underscored(name, 2)
+                if not parsed:
+                    continue
+                (line_id,) = parsed
+            else:
+                line_id = None
+
+            if line_id is not None:
+                timetable = timetables.setdefault(line_id, {"first_departure": None, "arrival_times": {}})
+                timetable["first_departure"] = var.X
+
+        parsed_results["timetables"] = timetables
+        parsed_results["dwell_times"] = dwell_times
+
+        self._save_detailed_results(
+            parsed_results, data, solve_time or parsed_results.get("runtime", 0.0)
+        )
 
     def _parse_solver_results(self, solver_model) -> dict:
         if solver_model is None:
