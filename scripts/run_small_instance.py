@@ -1,202 +1,127 @@
-"""
-BST-DT 小规模实例运行脚本
-运行10条线路的夜间公交同步时刻表优化模型
-"""
-
 import sys
 import os
+import argparse
+import logging
 from pathlib import Path
 import time
-import json
-import argparse
+import inspect
+
+# 确保项目根目录在 sys.path 中
+project_root = Path(__file__).parent.parent
+sys.path.append(str(project_root))
+
+# --- 自动适配导入部分 ---
+import src.data_loader
+import src.config
+import src.bstdt_model
+import gurobipy as gp
 from gurobipy import GRB
-from src.config import get_small_instance_config
-from src.data_loader import BSTDTDataLoader
+import pandas as pd
 
+# 自动查找类
+DataLoader = None
+for name, obj in inspect.getmembers(src.data_loader):
+    if inspect.isclass(obj) and 'Loader' in name:
+        DataLoader = obj
+        break
+if DataLoader is None:
+    raise ImportError("无法在 src/data_loader.py 中找到数据加载类")
 
-# 添加src目录到Python路径
-current_dir = Path(__file__).parent
-project_root = current_dir.parent
-src_dir = project_root / "src"
-sys.path.insert(0, str(src_dir))
+BSTDTConfig = None
+for name, obj in inspect.getmembers(src.config):
+    if inspect.isclass(obj) and 'Config' in name:
+        BSTDTConfig = obj
+        break
 
-# 现在导入模块
-try:
-    from src.data_loader import BSTDTDataLoader
-    from src.bstdt_model import BSTDT_Model
-    from src.config import BSTDTConfig
-    from src.data_models import ModelData, BusLine, TransferZone
+BSTDT_Model = None
+for name, obj in inspect.getmembers(src.bstdt_model):
+    if inspect.isclass(obj) and 'Model' in name and 'BST' in name:
+        BSTDT_Model = obj
+        break
 
-    print("成功导入所有模块")
-except ImportError as e:
-    print(f"导入模块失败: {e}")
-    print("请确保项目结构正确，并且src目录存在相应的模块文件")
-    sys.exit(1)
+# 配置日志
+logging.basicConfig(level=logging.INFO, format='%(message)s')
+logger = logging.getLogger(__name__)
 
-
-class SmallInstanceRunner:
-    """小规模实例运行器"""
-
-    def __init__(self, data_path: str = None):
-        """初始化运行器"""
-        if data_path is None:
-            # 默认数据路径
-            self.data_path = project_root / "data_complete\\data_small"
-        else:
-            self.data_path = Path(data_path)
-
-        # 确保数据路径存在
-        if not self.data_path.exists():
-            print(f"数据路径不存在: {self.data_path}")
-            sys.exit(1)
-
-        # 输出目录
+class BSTDT_Small_Runner:
+    def __init__(self, data_path, time_limit=1800, use_inequalities=True, use_capacity=False):
+        self.data_path = Path(data_path)
         self.results_dir = project_root / "results" / "small_instance"
         self.results_dir.mkdir(parents=True, exist_ok=True)
+        
+        self.config_params = {
+            'time_limit': time_limit,
+            'use_inequalities': use_inequalities,
+            'use_capacity': use_capacity
+        }
 
-        # 时间戳用于结果文件命名
-        self.timestamp = time.strftime("%Y%m%d_%H%M%S")
-
+    def load_data(self):
         print(f"数据路径: {self.data_path}")
         print(f"结果目录: {self.results_dir}")
+        loader = DataLoader(data_dir=str(self.data_path))
+        data = loader.load_all_data()
+        self._print_data_summary(data)
+        return data
 
-    def load_data(self) -> ModelData:
-        """加载数据"""
-        print("\n" + "=" * 60)
+    def _print_data_summary(self, data):
+        print("\n" + "="*60)
         print("步骤 1: 加载数据")
-        print("=" * 60)
+        print("="*60)
+        print("✓ 成功加载数据")
+        lines = getattr(data, 'lines', {})
+        zones = getattr(data, 'transfer_zones', {})
+        stops = getattr(data, 'bus_stops', {})
+        pairs = getattr(data, 'synchronization_pairs', [])
+        print(f"  线路数量: {len(lines)}")
+        print(f"  换乘区数量: {len(zones)}")
+        print(f"  站点数量: {len(stops)}")
+        print(f"  同步对数量: {len(pairs)}")
 
-        try:
-            loader = BSTDTDataLoader(self.data_path)
-            data = loader.load_all_data()
-
-            # 保存数据到实例变量，供后续使用
-            self.data = data
-
-            self._print_data_summary(data)
-            return data
-        except Exception as e:
-            print(f"加载数据失败: {e}")
-            raise
-
-    def _print_data_summary(self, data: ModelData):
-        """打印数据摘要"""
-        print(f"✓ 成功加载数据")
-        print(f"  线路数量: {len(data.lines)}")
-        print(f"  换乘区数量: {len(data.transfer_zones)}")
-        print(f"  站点数量: {len(data.bus_stops)}")
-        print(f"  线路-站点分配记录: {len(data.line_stop_assignments)}")
-        print(f"  同步对数量: {len(data.synchronization_pairs)}")
-        print(f"  计划时段长度: {data.model_parameters.planning_horizon} 分钟")
-
-        # 打印线路信息
-        print(f"\n  线路详细信息:")
-        for line_id, line in list(data.lines.items())[:5]:  # 只显示前5条线路
-            print(f"    {line_id}: 发车间隔={line.headway}分钟, 班次数={line.frequency}")
-        if len(data.lines) > 5:
-            print(f"    ... 还有 {len(data.lines) - 5} 条线路")
-
-        # 打印换乘区信息
-        print(f"\n  换乘区详细信息:")
-        for zone_id, zone in list(data.transfer_zones.items())[:3]:  # 只显示前3个换乘区
-            print(
-                f"    {zone_id}: 允许停留={zone.dwelling_allowed}, "
-                f"最大容量={zone.max_capacity}"
-            )
-        if len(data.transfer_zones) > 3:
-            print(f"    ... 还有 {len(data.transfer_zones) - 3} 个换乘区")
-
-    def create_config(self, time_limit: int = 3600) -> BSTDTConfig:
-        """创建模型配置"""
-        print("\n" + "=" * 60)
+    def setup_config(self):
+        print("\n" + "="*60)
         print("步骤 2: 配置模型参数")
-        print("=" * 60)
-
-        # 使用预定义的小规模实例配置
-        config = get_small_instance_config()
-
-        # 修改求解器配置
-        config.solver.time_limit = time_limit
+        print("="*60)
+        config = BSTDTConfig()
+        config.solver.time_limit = self.config_params['time_limit']
         config.solver.mip_gap = 0.01
-        config.solver.thread_count = 4
-        config.solver.output_flag = True
-
-        # 修改模型配置
-        config.model.planning_horizon = 239
-        config.model.max_dwelling_time = 3
-        config.model.big_m_value = 10000
-
-        # 修改约束配置
-        config.constraints.use_bus_capacity_constraints = False  # 小规模实例先不使用站点容量约束
-        config.constraints.use_valid_inequalities = True
-        config.constraints.use_periodic_constraints = True
-
-        # 修改输出配置
-        config.output.save_results = True
-        config.output.results_dir = str(self.results_dir)
-        config.verbose = True
-
-        # 设置实例名称和描述
-        config.instance_name = "small_instance_10_lines"
-        config.description = f"小规模实例 - {len(self.data.lines)}条夜间公交线路"
-
-        print(f"✓ 模型配置已创建")
-        print(f"  求解时间限制: {time_limit}秒 ({time_limit / 3600:.1f}小时)")
-        print(f"  MIP Gap: {config.solver.mip_gap * 100}%")
-        print(f"  使用有效不等式: {config.constraints.use_valid_inequalities}")
-        print(f"  使用站点容量约束: {config.constraints.use_bus_capacity_constraints}")
-
+        config.constraints.use_valid_inequalities = self.config_params['use_inequalities']
+        config.constraints.use_bus_capacity_constraints = self.config_params['use_capacity']
+        print("✓ 模型配置已创建")
         return config
 
-    def build_and_solve(self, data: ModelData, config: BSTDTConfig):
-        """构建并求解模型"""
+    def build_and_solve(self, data, config):
         print("\n" + "="*60)
         print("步骤 3: 构建和求解模型")
         print("="*60)
 
         print("创建BST-DT模型实例...")
         model = BSTDT_Model(data, config)
-        
         print("构建模型...")
         model.build_model()
 
-        # --- DYNAMICALLY FIND THE GUROBI OBJECT ---
+        # 智能探测 Gurobi 对象
         gurobi_solver = None
-        # Priority list of likely attribute names
-        possible_names = ['m', 'model', '_model', 'solver', 'gmodel', 'gurobi_model']
-        
-        print("正在定位 Gurobi 求解器对象...")
-        found_name = None
+        possible_names = ['m', 'model', '_model', 'solver', 'gmodel']
         for name in possible_names:
             if hasattr(model, name):
                 gurobi_solver = getattr(model, name)
-                found_name = name
-                print(f"✓ 成功定位: Gurobi 对象位于 'model.{name}'")
                 break
         
-        # If standard names fail, search __dict__ for any gurobipy.Model object
         if gurobi_solver is None:
-            print("尝试深度搜索...")
+            # 深度搜索
             for attr_name, attr_val in model.__dict__.items():
-                # Check if it looks like a Gurobi model (has .optimize method)
                 if hasattr(attr_val, 'optimize') and hasattr(attr_val, 'Status'):
                     gurobi_solver = attr_val
-                    found_name = attr_name
-                    print(f"✓ 深度搜索定位: Gurobi 对象位于 'model.{attr_name}'")
                     break
 
-        # CRITICAL FALLBACK
         if gurobi_solver is None:
-            print("\n[CRITICAL ERROR] 无法在 BSTDT_Model 中找到 Gurobi 对象。")
-            print("现有属性列表 (Attributes):", dir(model))
-            raise AttributeError("无法找到 Gurobi 模型对象，请检查 model 类的定义。")
+            raise AttributeError("无法找到 Gurobi 模型对象")
 
-        # --- RUN OPTIMIZATION ---
-        print(f"开始调用 Gurobi 求解器 (使用 {found_name})...")
+        print(f"开始调用 Gurobi 求解器...")
         gurobi_solver.optimize()
 
-        # --- CHECK RESULTS ---
-        if gurobi_solver.Status == GRB.OPTIMAL:
+        status = gurobi_solver.Status
+        if status == GRB.OPTIMAL:
             print(f"\n✓ 找到最优解! 目标值 = {gurobi_solver.ObjVal}")
             results = self._save_results(gurobi_solver, data)
 
@@ -389,235 +314,126 @@ class SmallInstanceRunner:
                     continue
                 timetable['arrival_times'][f"{zone_id}_{trip}"] = arrival_var.X
 
-            timetables[line_id] = timetable
+    def _save_results(self, gurobi_model, data):
+        """
+        修正版：专门解析下划线分隔的变量名 (例如 T_L01O_1_Z001)
+        """
+        print("\n正在提取结果并生成排班表...")
+        
+        records = []
+        
+        for v in gurobi_model.getVars():
+            # 这里允许值为0的变量通过，因为到达时间可能是0
+            name = v.VarName
+            val = v.X
+            
+            # --- 解析到达时间变量: T_line_trip_zone ---
+            # 你的代码生成的格式: f"T_{line.line_id}_{trip_idx}_{zone_id}"
+            if name.startswith("T_"):
+                parts = name.split('_')
+                # 假设 line_id 可能包含下划线，我们需要更健壮的分割
+                # T 是 parts[0]
+                # zone_id 是 parts[-1] (通常)
+                # trip_idx 是 parts[-2]
+                # line_id 是中间剩下的部分
+                
+                if len(parts) >= 4: # T, line..., trip, zone
+                    zone = parts[-1]
+                    trip = parts[-2]
+                    line = "_".join(parts[1:-2]) # 重新组合 line_id
+                    
+                    records.append({
+                        "type": "arrival",
+                        "line_id": line,
+                        "trip_id": trip,
+                        "zone_id": zone,
+                        "value": val
+                    })
 
-        return timetables
+            # --- 解析驻留时间变量: Z_line_zone ---
+            # 你的代码生成的格式: f"Z_{line.line_id}_{zone_id}"
+            elif name.startswith("Z_"):
+                parts = name.split('_')
+                if len(parts) >= 3: # Z, line..., zone
+                    zone = parts[-1]
+                    line = "_".join(parts[1:-1])
+                    
+                    records.append({
+                        "type": "dwell",
+                        "line_id": line,
+                        "zone_id": zone,
+                        "value": val
+                    })
 
-    def _extract_dwell_times(self, model: BSTDT_Model) -> dict:
-        """从模型变量中提取停留时间"""
-        dwell_times = {}
-        for (line_id, zone_id), dwell_var in model.Z.items():
-            dwell_times.setdefault(line_id, {})[zone_id] = dwell_var.X
-        return dwell_times
-
-    def _save_timetable_csv(self, timetables: dict):
-        """保存时刻表为CSV格式"""
-        if not timetables:
+        if not records:
+            print("⚠️ 警告: 未提取到有效变量。请检查变量名格式。")
+            # 打印前几个变量名帮助调试
+            print("实际变量名示例:", [v.VarName for v in gurobi_model.getVars()[:3]])
             return
 
-        csv_file = self.results_dir / f"timetable_{self.timestamp}.csv"
-
-        rows = []
-        for line_id, timetable in timetables.items():
-            first_departure = timetable.get('first_departure', 0)
-            rows.append({
-                'line_id': line_id,
-                'first_departure_minutes': first_departure,
-                'first_departure_time': self._minutes_to_time(first_departure)
+        df_raw = pd.DataFrame(records)
+        
+        arrivals = df_raw[df_raw['type'] == 'arrival'].copy()
+        dwells = df_raw[df_raw['type'] == 'dwell'].copy()
+        
+        timetable = []
+        
+        for _, arr in arrivals.iterrows():
+            line = arr['line_id']
+            zone = arr['zone_id']
+            trip = arr['trip_id']
+            arr_time = arr['value']
+            
+            # 查找对应的驻留时间
+            d_rows = dwells[(dwells['line_id'] == line) & (dwells['zone_id'] == zone)]
+            dwell_time = d_rows['value'].iloc[0] if not d_rows.empty else 0.0
+            
+            timetable.append({
+                "line_id": line,
+                "trip_id": trip,
+                "zone_id": zone,
+                "arrival_time": arr_time,
+                "dwell_time": dwell_time,
+                "departure_time": arr_time + dwell_time
             })
+            
+        df_final = pd.DataFrame(timetable)
+        output_path = self.results_dir / "timetable.csv"
+        df_final.to_csv(output_path, index=False)
+        print(f"✅ 排班表已成功保存至: {output_path}")
+        print(f"   (快去画图吧！)")
 
-        import pandas as pd
-        df = pd.DataFrame(rows)
-        df.to_csv(csv_file, index=False, encoding='utf-8')
-        print(f"✓ 时刻表已保存到: {csv_file}")
-
-    def _minutes_to_time(self, minutes: float) -> str:
-        """将分钟数转换为时间字符串（从00:00开始）"""
-        hours = int(minutes // 60)
-        mins = int(minutes % 60)
-        return f"{hours:02d}:{mins:02d}"
-
-    def _get_status_text(self, status_code: int) -> str:
-        """获取求解状态文本"""
-        status_map = {
-            1: 'LOADED',
-            2: 'OPTIMAL',
-            3: 'INFEASIBLE',
-            4: 'INF_OR_UNBD',
-            5: 'UNBOUNDED',
-            6: 'CUTOFF',
-            7: 'ITERATION_LIMIT',
-            8: 'NODE_LIMIT',
-            9: 'TIME_LIMIT',
-            10: 'SOLUTION_LIMIT',
-            11: 'INTERRUPTED',
-            12: 'NUMERIC',
-            13: 'SUBOPTIMAL',
-            14: 'INPROGRESS',
-            15: 'USER_OBJ_LIMIT'
-        }
-        return status_map.get(status_code, f'UNKNOWN({status_code})')
-
-    def analyze_results(self, results: dict, data: ModelData):
-        """分析结果"""
-        print("\n" + "=" * 60)
-        print("步骤 4: 结果分析")
-        print("=" * 60)
-
-        if not results or 'objective_value' not in results:
-            print("没有有效结果可分析")
-            return
-
-        obj_val = results.get('objective_value', 0)
-        sync_count = results.get('synchronizations', 0)
-        status = results.get('status')
-        runtime = results.get('runtime', 0)
-        mip_gap = results.get('mip_gap', 0)
-
-        print(f"求解状态: {self._get_status_text(status)}")
-        print(f"目标函数值: {obj_val:.2f}")
-        print(f"同步次数: {sync_count}")
-        print(f"求解时间: {runtime:.2f}秒")
-        print(f"MIP Gap: {mip_gap:.4%}")
-
-        # 计算可能的改进
-        if sync_count > 0:
-            # 这是一个简化的基准计算（实际应该有基准时刻表数据）
-            # 假设每条线路的发车时间是均匀分布的
-            baseline_sync = self._estimate_baseline_sync(data)
-            improvement = 0
-            if baseline_sync > 0:
-                improvement = (sync_count - baseline_sync) / baseline_sync * 100
-                print(f"估计的基准同步次数: {baseline_sync}")
-                print(f"相对于基准的改进: {improvement:.1f}%")
-
-            # 按换乘区分析同步情况
-            self._analyze_by_zone(results, data)
-
-    def _estimate_baseline_sync(self, data: ModelData) -> int:
-        """估计基准同步次数（简化版）"""
-        # 这是一个非常简化的估计，假设发车时间均匀分布
-        # 实际应该有一个真实的基准时刻表
-        total_possible_pairs = 0
-
-        for pair in data.synchronization_pairs:
-            f_i = data.lines[pair.line_i].frequency
-            f_j = data.lines[pair.line_j].frequency
-            total_possible_pairs += f_i * f_j
-
-        # 假设有5%的同步概率（完全随机）
-        return int(total_possible_pairs * 0.05)
-
-    def _analyze_by_zone(self, results: dict, data: ModelData):
-        """按换乘区分析同步情况"""
-        print("\n按换乘区同步统计:")
-
-        zone_stats = {}
-        for pair in data.synchronization_pairs:
-            zone_id = pair.zone_id
-            if zone_id not in zone_stats:
-                zone_stats[zone_id] = {
-                    'total_pairs': 0,
-                    'sync_count': 0,
-                    'lines': set()
-                }
-
-            # 统计线路
-            zone_stats[zone_id]['lines'].add(pair.line_i)
-            zone_stats[zone_id]['lines'].add(pair.line_j)
-
-            # 统计可能的同步对
-            f_i = data.lines[pair.line_i].frequency
-            f_j = data.lines[pair.line_j].frequency
-            zone_stats[zone_id]['total_pairs'] += f_i * f_j
-
-        # 计算实际的同步次数（需要从结果中提取，这里简化）
-        # 在实际实现中，应该从模型的Y变量中统计每个换乘区的同步次数
-
-        for zone_id, stats in zone_stats.items():
-            line_count = len(stats['lines'])
-            print(f"  {zone_id}: {line_count}条线路, "
-                  f"{stats['total_pairs']}个可能的同步对")
-
-    def run(self, time_limit: int = 3600):
-        """运行完整的流程"""
-        print("\n" + "=" * 60)
+    def run(self):
+        print("\n" + "="*60)
         print("BST-DT 小规模实例求解")
-        print("=" * 60)
-
+        print("="*60)
         print(f"开始时间: {time.strftime('%Y-%m-%d %H:%M:%S')}")
-        print(f"实例规模: 10条夜间公交线路")
-        print(f"时间限制: {time_limit}秒")
-
+        
         try:
-            # 步骤1: 加载数据
             data = self.load_data()
-
-            # 步骤2: 创建配置
-            config = self.create_config(time_limit)
-
-            # 步骤3: 构建和求解模型
-            results = self.build_and_solve(data, config)
-
-            # 步骤4: 分析结果
-            if results:
-                self.analyze_results(results, data)
-
-            print("\n" + "=" * 60)
+            config = self.setup_config()
+            self.build_and_solve(data, config)
+            print("\n" + "="*60)
             print("运行完成!")
-            print("=" * 60)
-
-            return results
-
-        except KeyboardInterrupt:
-            print("\n\n用户中断了程序")
-            return None
+            print("="*60)
         except Exception as e:
-            print(f"\n运行过程中发生错误: {e}")
+            print(f"\n运行过程中发生错误: {str(e)}")
             import traceback
             traceback.print_exc()
-            return None
-
-
-def parse_arguments():
-    """解析命令行参数"""
-    parser = argparse.ArgumentParser(description='运行BST-DT小规模实例')
-
-    parser.add_argument('--data-path', type=str, default=None,
-                        help='数据目录路径（默认: ./data_complete）')
-
-    parser.add_argument('--time-limit', type=int, default=3600,
-                        help='求解时间限制（秒，默认: 3600）')
-
-    parser.add_argument('--no-capacity', action='store_true',
-                        help='不使用站点容量约束')
-
-    parser.add_argument('--no-inequalities', action='store_true',
-                        help='不使用有效不等式')
-
-    parser.add_argument('--quick-test', action='store_true',
-                        help='快速测试模式（时间限制300秒）')
-
-    return parser.parse_args()
-
-
-def main():
-    """主函数"""
-    # 解析命令行参数
-    args = parse_arguments()
-
-    # 如果是快速测试模式
-    if args.quick_test:
-        args.time_limit = 300
-        print("快速测试模式：时间限制设置为300秒")
-
-    # 创建运行器
-    runner = SmallInstanceRunner(args.data_path)
-
-    # 运行模型
-    results = runner.run(time_limit=args.time_limit)
-
-    # 根据结果退出
-    if results and results.get('optimal', False):
-        print("\n✓ 找到最优解!")
-        sys.exit(0)
-    elif results and results.get('objective_value') is not None:
-        print("\n✓ 找到可行解（可能不是最优）")
-        sys.exit(0)
-    else:
-        print("\n✗ 求解失败或未找到可行解")
-        sys.exit(1)
-
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description='Run BST-DT Small Instance')
+    parser.add_argument('--data-path', type=str, required=True, help='Path to data directory')
+    parser.add_argument('--time-limit', type=int, default=1800, help='Solver time limit in seconds')
+    parser.add_argument('--no-capacity', action='store_true', help='Disable bus stop capacity constraints')
+    parser.add_argument('--no-inequalities', action='store_true', help='Disable valid inequalities')
+    
+    args = parser.parse_args()
+    
+    runner = BSTDT_Small_Runner(
+        data_path=args.data_path,
+        time_limit=args.time_limit,
+        use_inequalities=not args.no_inequalities,
+        use_capacity=not args.no_capacity
+    )
+    runner.run()
