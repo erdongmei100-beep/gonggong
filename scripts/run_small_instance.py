@@ -132,7 +132,202 @@ class BSTDT_Small_Runner:
             gurobi_solver.computeIIS()
             gurobi_solver.write(str(self.results_dir / "model_iis.ilp"))
         else:
-            print(f"\n✗ 求解结束，状态码: {status}")
+            print(f"\n✗ 求解结束，状态码: {gurobi_solver.Status}")
+
+    def _collect_results(self, model: BSTDT_Model, solve_time: float | None = None) -> dict:
+        solver_model = model.m if hasattr(model, "m") else getattr(model, "model", None)
+        if solver_model is None:
+            return {}
+
+        has_solution = solver_model.SolCount > 0
+        results = {
+            'status': solver_model.Status,
+            'objective_value': solver_model.ObjVal if has_solution else None,
+            'runtime': solver_model.Runtime,
+            'solve_time_seconds': solve_time,
+            'mip_gap': solver_model.MIPGap if solver_model.Status in (GRB.OPTIMAL, GRB.TIME_LIMIT) else None,
+            'node_count': solver_model.NodeCount,
+            'solution_count': solver_model.SolCount,
+            'optimal': solver_model.Status == GRB.OPTIMAL,
+        }
+
+        if has_solution and hasattr(self, "_latest_model") and self._latest_model is model:
+            results.update({
+                'timetables': self._extract_timetables(model),
+                'dwell_times': self._extract_dwell_times(model),
+            })
+
+        return results
+
+    def _save_results(self, solver_model, data: ModelData, results: dict | None = None, solve_time: float | None = None):
+        if results is None:
+            results = self._parse_solver_results(solver_model)
+
+        if results:
+            self._save_detailed_results(results, data, solve_time or results.get('runtime', 0.0))
+
+    def _parse_solver_results(self, solver_model) -> dict:
+        if solver_model is None:
+            return {}
+
+        has_solution = getattr(solver_model, "SolCount", 0) > 0
+        results = {
+            'status': getattr(solver_model, "Status", None),
+            'objective_value': getattr(solver_model, "ObjVal", None) if has_solution else None,
+            'runtime': getattr(solver_model, "Runtime", None),
+            'mip_gap': getattr(solver_model, "MIPGap", None) if has_solution else None,
+            'node_count': getattr(solver_model, "NodeCount", None),
+            'solution_count': getattr(solver_model, "SolCount", None),
+            'optimal': getattr(solver_model, "Status", None) == GRB.OPTIMAL,
+        }
+
+        if not has_solution:
+            return results
+
+        timetables: dict[str, dict] = {}
+        dwell_times: dict[str, dict] = {}
+        first_departures: dict[str, float] = {}
+
+        for var in solver_model.getVars():
+            vname = var.VarName
+            parsed = self._parse_variable_name(vname)
+            if parsed is None:
+                continue
+
+            vtype = parsed[0]
+            if vtype == 'X':
+                _, line_id = parsed
+                first_departures[line_id] = var.X
+            elif vtype == 'T':
+                _, line_id, trip_id, zone_id = parsed
+                timetable = timetables.setdefault(line_id, {'first_departure': None, 'arrival_times': {}})
+                timetable['arrival_times'][f"{zone_id}_{trip_id}"] = var.X
+            elif vtype == 'Z':
+                _, line_id, zone_id = parsed
+                dwell_times.setdefault(line_id, {})[zone_id] = var.X
+
+        for line_id, departure in first_departures.items():
+            timetable = timetables.setdefault(line_id, {'first_departure': None, 'arrival_times': {}})
+            timetable['first_departure'] = departure
+
+        results['timetables'] = timetables
+        results['dwell_times'] = dwell_times
+        return results
+
+    def _parse_variable_name(self, name: str):
+        """Parse Gurobi variable names with underscore-separated segments.
+
+        Supports patterns like T_Line_Trip_Zone and Z_Line_Zone. When line IDs
+        contain underscores, the last fields are taken as trip (for T) and zone
+        identifiers while the remaining prefix is treated as the line ID.
+        Bracketed names (e.g., T[line,trip,zone]) remain supported for
+        backward compatibility.
+        """
+
+        if name.startswith('T_'):
+            parts = name[2:].split('_')
+            if len(parts) < 3:
+                return None
+            zone_id = parts[-1]
+            trip_id = parts[-2]
+            line_id = '_'.join(parts[:-2])
+            try:
+                trip_val = int(trip_id)
+            except ValueError:
+                return None
+            return ('T', line_id, trip_val, zone_id)
+
+        if name.startswith('Z_'):
+            parts = name[2:].split('_')
+            if len(parts) < 2:
+                return None
+            zone_id = parts[-1]
+            line_id = '_'.join(parts[:-1])
+            return ('Z', line_id, zone_id)
+
+        if name.startswith('X_'):
+            line_id = name[2:]
+            return ('X', line_id)
+
+        if name.startswith('T[') and name.endswith(']'):
+            inner = name[2:-1]
+            segments = [seg.strip() for seg in inner.split(',')]
+            if len(segments) != 3:
+                return None
+            try:
+                trip_val = int(segments[1])
+            except ValueError:
+                return None
+            return ('T', segments[0], trip_val, segments[2])
+
+        if name.startswith('Z[') and name.endswith(']'):
+            inner = name[2:-1]
+            segments = [seg.strip() for seg in inner.split(',')]
+            if len(segments) != 2:
+                return None
+            return ('Z', segments[0], segments[1])
+
+        if name.startswith('X[') and name.endswith(']'):
+            inner = name[2:-1]
+            return ('X', inner)
+
+        return None
+
+    def _save_detailed_results(self, results: dict, data: ModelData, solve_time: float):
+        """保存详细结果"""
+        if not results or 'objective_value' not in results:
+            print("没有有效结果可保存")
+            return
+
+        # 创建结果文件名
+        result_file = self.results_dir / f"detailed_results_{self.timestamp}.json"
+
+        # 准备结果数据
+        detailed_results = {
+            "timestamp": self.timestamp,
+            "solve_time_seconds": solve_time,
+            "model_summary": {
+                "line_count": len(data.lines),
+                "zone_count": len(data.transfer_zones),
+                "stop_count": len(data.bus_stops),
+                "sync_pair_count": len(data.synchronization_pairs),
+                "planning_horizon": data.planning_horizon
+            },
+            "solver_results": {
+                "status": self._get_status_text(results.get('status')),
+                "objective_value": results.get('objective_value'),
+                "runtime": results.get('runtime'),
+                "mip_gap": results.get('mip_gap'),
+                "node_count": results.get('node_count'),
+                "synchronization_count": results.get('synchronizations', 0),
+                "optimal": results.get('optimal', False)
+            },
+            "timetables": results.get('timetables', {}),
+            "dwell_times": results.get('dwell_times', {})
+        }
+
+        # 保存到文件
+        with open(result_file, 'w', encoding='utf-8') as f:
+            json.dump(detailed_results, f, indent=2, ensure_ascii=False)
+
+        print(f"✓ 详细结果已保存到: {result_file}")
+
+        # 也保存一个简化的CSV格式时刻表
+        self._save_timetable_csv(results.get('timetables', {}))
+
+    def _extract_timetables(self, model: BSTDT_Model) -> dict:
+        """从模型变量中提取时刻表信息"""
+        timetables = {}
+        for line_id, first_departure_var in model.X.items():
+            timetable = {
+                'first_departure': first_departure_var.X,
+                'arrival_times': {}
+            }
+
+            for (l_id, trip, zone_id), arrival_var in model.T.items():
+                if l_id != line_id:
+                    continue
+                timetable['arrival_times'][f"{zone_id}_{trip}"] = arrival_var.X
 
     def _save_results(self, gurobi_model, data):
         """
