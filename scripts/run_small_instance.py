@@ -123,16 +123,26 @@ class BSTDT_Small_Runner:
         status = gurobi_solver.Status
         if status == GRB.OPTIMAL:
             print(f"\n✓ 找到最优解! 目标值 = {gurobi_solver.ObjVal}")
-            self._save_results(gurobi_solver, data)
-        elif status == GRB.TIME_LIMIT:
+            results = self._save_results(gurobi_solver, data)
+
+        elif gurobi_solver.Status == GRB.TIME_LIMIT:
             print(f"\n! 达到时间限制. 当前最优目标值 = {gurobi_solver.ObjVal}")
-            self._save_results(gurobi_solver, data)
-        elif status == GRB.INFEASIBLE:
-            print("\n✗ 模型不可行 (Infeasible)。")
-            gurobi_solver.computeIIS()
-            gurobi_solver.write(str(self.results_dir / "model_iis.ilp"))
+            results = self._save_results(gurobi_solver, data)
+            
+        elif gurobi_solver.Status == GRB.INFEASIBLE:
+            print("\n✗ 模型不可行 (Infeasible)。正在计算 IIS...")
+            try:
+                gurobi_solver.computeIIS()
+                gurobi_solver.write(os.path.join(self.results_dir, "model_iis.ilp"))
+                print("  IIS 文件已保存。")
+            except:
+                print("  无法计算 IIS (可能模型未完全构建)。")
+            
         else:
             print(f"\n✗ 求解结束，状态码: {gurobi_solver.Status}")
+            results = None
+
+        return results
 
     def _collect_results(self, model: BSTDT_Model, solve_time: float | None = None) -> dict:
         solver_model = model.m if hasattr(model, "m") else getattr(model, "model", None)
@@ -160,110 +170,93 @@ class BSTDT_Small_Runner:
         return results
 
     def _save_results(self, solver_model, data: ModelData, results: dict | None = None, solve_time: float | None = None):
-        """Parse solver variables and save detailed outputs."""
+        if results is None:
+            results = self._extract_results_from_solver(solver_model)
 
-        if solver_model is None:
-            print("没有可用的求解模型，无法保存结果")
-            return
-
-        has_solution = getattr(solver_model, "SolCount", 0) > 0
-        parsed_results = results.copy() if results else {}
-
-        parsed_results.setdefault("status", getattr(solver_model, "Status", None))
-        parsed_results.setdefault("objective_value", solver_model.ObjVal if has_solution else None)
-        parsed_results.setdefault("runtime", getattr(solver_model, "Runtime", None))
-        parsed_results.setdefault("mip_gap", getattr(solver_model, "MIPGap", None))
-        parsed_results.setdefault("node_count", getattr(solver_model, "NodeCount", None))
-        parsed_results.setdefault("optimal", getattr(solver_model, "Status", None) == GRB.OPTIMAL)
-
-        timetables: dict[str, dict] = {}
-        dwell_times: dict[str, dict] = {}
-
-        def parse_bracketed(name: str):
-            inner = name[name.index("[") + 1 : name.rindex("]")]
-            return inner.split(",")
-
-        def parse_underscored(name: str, expected_parts: int):
-            pieces = name.split("_")
-            if len(pieces) < expected_parts:
-                return None
-            var_type = pieces[0]
-            zone = pieces[-1]
-            if var_type == "T":
-                trip = pieces[-2]
-                line = "_".join(pieces[1:-2])
-                return line, trip, zone
-            if var_type == "Z":
-                line = "_".join(pieces[1:-1])
-                return line, zone
-            if var_type == "X":
-                line = "_".join(pieces[1:])
-                return line,
+        if not results:
+            print("没有可保存的求解结果")
             return None
 
-        for var in getattr(solver_model, "getVars", lambda: [])():
-            name = getattr(var, "VarName", "")
-            if name.startswith("T[") and name.endswith("]"):
-                parts = parse_bracketed(name)
-                if len(parts) == 3:
-                    line_id, trip_id, zone_id = parts
-                else:
-                    continue
-            elif name.startswith("T_"):
-                parsed = parse_underscored(name, 4)
-                if not parsed:
-                    continue
-                line_id, trip_id, zone_id = parsed
-            else:
-                line_id = trip_id = zone_id = None
-
-            if line_id is not None:
-                timetable = timetables.setdefault(line_id, {"first_departure": None, "arrival_times": {}})
-                timetable["arrival_times"][f"{zone_id}_{trip_id}"] = var.X
-                continue
-
-            if name.startswith("Z[") and name.endswith("]"):
-                parts = parse_bracketed(name)
-                if len(parts) == 2:
-                    line_id, zone_id = parts
-                else:
-                    continue
-            elif name.startswith("Z_"):
-                parsed = parse_underscored(name, 3)
-                if not parsed:
-                    continue
-                line_id, zone_id = parsed
-            else:
-                line_id = zone_id = None
-
-            if line_id is not None:
-                dwell_times.setdefault(line_id, {})[zone_id] = var.X
-                continue
-
-            if name.startswith("X[") and name.endswith("]"):
-                parts = parse_bracketed(name)
-                if len(parts) == 1:
-                    line_id = parts[0]
-                else:
-                    continue
-            elif name.startswith("X_"):
-                parsed = parse_underscored(name, 2)
-                if not parsed:
-                    continue
-                (line_id,) = parsed
-            else:
-                line_id = None
-
-            if line_id is not None:
-                timetable = timetables.setdefault(line_id, {"first_departure": None, "arrival_times": {}})
-                timetable["first_departure"] = var.X
-
-        parsed_results["timetables"] = timetables
-        parsed_results["dwell_times"] = dwell_times
-
         self._save_detailed_results(
-            parsed_results, data, solve_time or parsed_results.get("runtime", 0.0)
+            results,
+            data,
+            solve_time if solve_time is not None else results.get('runtime', 0.0),
         )
+        return results
+
+    def _extract_results_from_solver(self, solver_model) -> dict:
+        """从 Gurobi 模型对象中解析求解结果."""
+        if solver_model is None or not hasattr(solver_model, "getVars"):
+            return {}
+
+        timetables: dict = {}
+        dwell_times: dict = {}
+        first_departures: dict = {}
+
+        for var in solver_model.getVars():
+            name = var.VarName
+
+            if name.startswith("T_"):
+                parts = name.split("_")
+                if len(parts) < 4:
+                    continue
+                zone_id = parts[-1]
+                trip_id = parts[-2]
+                line_id = "_".join(parts[1:-2])
+                try:
+                    trip_int = int(trip_id)
+                except ValueError:
+                    continue
+                timetable = timetables.setdefault(line_id, {"first_departure": None, "arrival_times": {}})
+                timetable["arrival_times"][f"{zone_id}_{trip_int}"] = var.X
+
+            elif name.startswith("Z_"):
+                parts = name.split("_")
+                if len(parts) < 3:
+                    continue
+                zone_id = parts[-1]
+                line_id = "_".join(parts[1:-1])
+                dwell_times.setdefault(line_id, {})[zone_id] = var.X
+
+            elif name.startswith("X_"):
+                # X_{LineID} -> First departure
+                _, line_id = name.split("_", 1)
+                first_departures[line_id] = var.X
+
+            elif name.startswith("T[") and name.endswith("]"):
+                try:
+                    line_id, trip, zone_id = name[2:-1].split(",")
+                    timetable = timetables.setdefault(line_id, {"first_departure": None, "arrival_times": {}})
+                    timetable["arrival_times"][f"{zone_id}_{int(trip)}"] = var.X
+                except Exception:
+                    continue
+
+            elif name.startswith("Z[") and name.endswith("]"):
+                try:
+                    line_id, zone_id = name[2:-1].split(",")
+                    dwell_times.setdefault(line_id, {})[zone_id] = var.X
+                except Exception:
+                    continue
+
+            elif name.startswith("X[") and name.endswith("]"):
+                line_id = name[2:-1]
+                first_departures[line_id] = var.X
+
+        for line_id, dep_time in first_departures.items():
+            timetable = timetables.setdefault(line_id, {"first_departure": None, "arrival_times": {}})
+            timetable["first_departure"] = dep_time
+
+        return {
+            "status": getattr(solver_model, "Status", None),
+            "objective_value": getattr(solver_model, "ObjVal", None),
+            "runtime": getattr(solver_model, "Runtime", None),
+            "mip_gap": getattr(solver_model, "MIPGap", None),
+            "node_count": getattr(solver_model, "NodeCount", None),
+            "solution_count": getattr(solver_model, "SolCount", None),
+            "optimal": getattr(solver_model, "Status", None) == GRB.OPTIMAL,
+            "timetables": timetables,
+            "dwell_times": dwell_times,
+        }
 
     def _save_detailed_results(self, results: dict, data: ModelData, solve_time: float):
         """保存详细结果"""
