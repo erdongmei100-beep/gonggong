@@ -47,6 +47,19 @@ class BSTDTModel:
     def _create_variables(self) -> None:
         assert self.model is not None
         m = self.model
+        travel_lookup: Dict[str, set[str]]
+        if isinstance(self.data.travel_times, list):
+            travel_lookup = {}
+            for tt in self.data.travel_times:
+                line_id = getattr(tt, "line_id", None)
+                stop_id = getattr(tt, "to_stop_id", None)
+                zone_id = None
+                if stop_id and stop_id in self.data.bus_stops:
+                    zone_id = self.data.bus_stops[stop_id].zone_id
+                if line_id and zone_id:
+                    travel_lookup.setdefault(line_id, set()).add(zone_id)
+        else:
+            travel_lookup = self.data.travel_times
         for line_id, line in self.data.lines.items():
             constraints = self.data.service_constraints.get(line_id)
             lb = constraints.first_trip_min_time if constraints else 0.0
@@ -56,7 +69,7 @@ class BSTDTModel:
             min_dwell = constraints.min_dwell_time if constraints else 0.0
             max_dwell_line = constraints.max_dwell_time if constraints else self.data.model_parameters.max_dwelling_time_global
             max_dwell = min(max_dwell_line, self.data.model_parameters.max_dwelling_time_global)
-            valid_zones = self.data.travel_times.get(line_id, {}).keys()
+            valid_zones = travel_lookup.get(line_id, set())
             for zone_id in valid_zones:
                 self.Z[(line_id, zone_id)] = m.addVar(
                     lb=min_dwell,
