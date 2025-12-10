@@ -56,7 +56,8 @@ class BSTDTModel:
             min_dwell = constraints.min_dwell_time if constraints else 0.0
             max_dwell_line = constraints.max_dwell_time if constraints else self.data.model_parameters.max_dwelling_time_global
             max_dwell = min(max_dwell_line, self.data.model_parameters.max_dwelling_time_global)
-            for zone_id in self.data.get_zone_sequence(line_id):
+            valid_zones = self.data.travel_times.get(line_id, {}).keys()
+            for zone_id in valid_zones:
                 self.Z[(line_id, zone_id)] = m.addVar(
                     lb=min_dwell,
                     ub=max_dwell,
@@ -65,7 +66,7 @@ class BSTDTModel:
                 )
 
             for trip in range(1, self.data.num_trips_by_line.get(line_id, 0) + 1):
-                for zone_id in self.data.get_zone_sequence(line_id):
+                for zone_id in valid_zones:
                     self.T[(line_id, trip, zone_id)] = m.addVar(
                         lb=0.0,
                         ub=self.data.model_parameters.planning_horizon,
@@ -114,13 +115,22 @@ class BSTDTModel:
                     if travel_time is None:
                         logger.warning("Travel time missing for line %s zone %s", line_id, zone_id)
                         continue
+                    arrival_var = self.T.get((line_id, trip, zone_id))
+                    dwell_var = self.Z.get((line_id, zone_id))
+                    if arrival_var is None or dwell_var is None:
+                        logger.debug(
+                            "Skipping arrival constraint for line %s trip %s zone %s due to missing variables",
+                            line_id,
+                            trip,
+                            zone_id,
+                        )
+                        continue
                     prefix_expr = gp.quicksum(dwell_prefix) if dwell_prefix else 0.0
                     m.addConstr(
-                        self.T[(line_id, trip, zone_id)]
-                        == self.X[line_id] + travel_time + (trip - 1) * headway + prefix_expr,
+                        arrival_var == self.X[line_id] + travel_time + (trip - 1) * headway + prefix_expr,
                         name=f"arrival[{line_id},{trip},{zone_id}]",
                     )
-                    dwell_prefix.append(self.Z[(line_id, zone_id)])
+                    dwell_prefix.append(dwell_var)
 
     def _add_synchronization_constraints(self) -> None:
         assert self.model is not None
@@ -159,7 +169,7 @@ class BSTDTModel:
             base_time = self.data.base_travel_time.get(line_id)
             if constraints is None or base_time is None:
                 continue
-            dwell_vars = [self.Z[(line_id, z)] for z in self.data.get_zone_sequence(line_id)]
+            dwell_vars = [self.Z[(line_id, z)] for z in self.data.get_zone_sequence(line_id) if (line_id, z) in self.Z]
             if dwell_vars:
                 m.addConstr(
                     gp.quicksum(dwell_vars) <= constraints.max_cycle_time_increase * base_time,
