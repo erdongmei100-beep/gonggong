@@ -63,8 +63,12 @@ class BSTDTDataLoader:
         stop_zone_map: Dict[str, str] = {
             stop_id.strip(): stop.zone_id.strip() for stop_id, stop in stops.items()
         }
+        for zone_id in zones.keys():
+            stop_zone_map.setdefault(zone_id.strip(), zone_id.strip())
         line_zone_sequence = self._build_zone_sequences(assignments)
-        travel_time_map, base_travel = self._build_travel_time_map(travel_times, stop_zone_map, set(lines.keys()))
+        travel_time_map, base_travel = self._build_travel_time_map(
+            travel_times, stop_zone_map, set(lines.keys()), zones
+        )
         num_trips_by_line = self._compute_trip_counts(lines, model_parameters.planning_horizon)
 
         return ModelData(
@@ -220,6 +224,7 @@ class BSTDTDataLoader:
         travel_times: List[TravelTimeEntry],
         stop_zone_map: Dict[str, str],
         known_lines: set[str],
+        transfer_zone_lookup: Dict[str, TransferZone],
     ) -> Tuple[Dict[Tuple[str, str], float], Dict[str, float]]:
         travel_time_map: Dict[Tuple[str, str], float] = {}
         base_travel: Dict[str, float] = {}
@@ -258,6 +263,8 @@ class BSTDTDataLoader:
             for stop_id, time_val in cumulative.items():
                 stop_id_clean = str(stop_id).strip()
                 zone_id = stop_zone_map.get(stop_id_clean)
+                if zone_id is None and stop_id_clean in transfer_zone_lookup:
+                    zone_id = stop_id_clean
                 if zone_id is None:
                     if not first_zone_lookup_debugged:
                         logger.debug(
