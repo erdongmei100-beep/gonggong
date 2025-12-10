@@ -223,6 +223,7 @@ class BSTDTDataLoader:
         self,
         travel_times: List[TravelTimeEntry],
         stop_zone_map: Dict[str, str],
+        transfer_zones: Dict[str, TransferZone],
         known_lines: set[str],
         transfer_zone_lookup: Dict[str, TransferZone],
     ) -> Tuple[Dict[Tuple[str, str], float], Dict[str, float]]:
