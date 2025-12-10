@@ -1,6 +1,6 @@
-line_i,line_j,zone_id,min_sync_window,max_sync_window,sync_weight,walking_time,is_bidirectional,priority,walking_time_between,sync_priority
-L01O,L02I,Z003,0,5,1.0,1.9,True,3,0.2,normal
-L01O,L05O,Z001,-2,3,0.8,2.9,True,1,0.1,low
-L03O,L04I,Z002,0,4,1.2,1.8,True,1,0.3,low
-L03O,L05O,Z004,1,6,0.9,2.0,True,1,1.5,high
-L01O,L03O,Z001,-1,2,1.5,2.0,True,2,2.0,high
+line_i,line_j,zone_id,min_sync_window,max_sync_window,sync_weight
+L01O,L02O,Z2,0,10,1
+L02O,L03O,Z3,0,10,1
+L03O,L04O,Z4,0,10,1
+L04O,L05O,Z5,0,10,1
+L05O,L01O,Z1,0,10,1

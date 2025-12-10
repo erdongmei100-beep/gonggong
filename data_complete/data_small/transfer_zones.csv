@@ -1,6 +1,6 @@
-zone_id,name,dwelling_allowed,location_x,location_y,description,is_major_transfer,max_capacity,has_security,walking_radius_m
-Z001,City Center,True,4.98,5.78,City Center transfer zone,True,5,False,200.0
-Z002,University,True,10.4,7.03,University transfer zone,False,3,False,200.0
-Z003,Railway Station,True,4.17,12.42,Railway Station transfer zone,True,4,False,200.0
-Z004,Airport,False,18.9,11.02,Airport transfer zone,False,3,True,200.0
-Z005,Shopping Mall,True,7.27,16.29,Shopping Mall transfer zone,False,3,False,200.0
+zone_id,dwelling_allowed,location_x,location_y,is_major_transfer
+Z1,True,2,2,True
+Z2,True,4,4,True
+Z3,True,6,6,True
+Z4,True,8,8,True
+Z5,True,10,10,True
