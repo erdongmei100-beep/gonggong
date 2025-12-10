@@ -225,7 +225,7 @@ class BSTDTDataLoader:
         stop_zone_map: Dict[str, str],
         transfer_zones: Dict[str, TransferZone],
         known_lines: set[str],
-        transfer_zones: Dict[str, TransferZone],
+        transfer_zone_lookup: Dict[str, TransferZone],
     ) -> Tuple[Dict[Tuple[str, str], float], Dict[str, float]]:
         travel_time_map: Dict[Tuple[str, str], float] = {}
         base_travel: Dict[str, float] = {}
@@ -264,7 +264,7 @@ class BSTDTDataLoader:
             for stop_id, time_val in cumulative.items():
                 stop_id_clean = str(stop_id).strip()
                 zone_id = stop_zone_map.get(stop_id_clean)
-                if zone_id is None and stop_id_clean in transfer_zones:
+                if zone_id is None and stop_id_clean in transfer_zone_lookup:
                     zone_id = stop_id_clean
                 if zone_id is None:
                     if not first_zone_lookup_debugged:
