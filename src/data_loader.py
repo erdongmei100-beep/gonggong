@@ -63,6 +63,9 @@ class BSTDTDataLoader:
         stop_zone_map: Dict[str, str] = {
             stop_id.strip(): stop.zone_id.strip() for stop_id, stop in stops.items()
         }
+        # Allow travel times to reference transfer zones directly by ID
+        for zone_id in zones.keys():
+            stop_zone_map.setdefault(zone_id.strip(), zone_id.strip())
         line_zone_sequence = self._build_zone_sequences(assignments)
         travel_time_map, base_travel = self._build_travel_time_map(travel_times, stop_zone_map, set(lines.keys()))
         num_trips_by_line = self._compute_trip_counts(lines, model_parameters.planning_horizon)

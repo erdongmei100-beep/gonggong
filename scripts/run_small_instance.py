@@ -198,11 +198,11 @@ class SmallInstanceRunner:
         # --- CHECK RESULTS ---
         if gurobi_solver.Status == GRB.OPTIMAL:
             print(f"\n✓ 找到最优解! 目标值 = {gurobi_solver.ObjVal}")
-            self._save_results(gurobi_solver, data)
-            
+            results = self._save_results(gurobi_solver, data)
+
         elif gurobi_solver.Status == GRB.TIME_LIMIT:
             print(f"\n! 达到时间限制. 当前最优目标值 = {gurobi_solver.ObjVal}")
-            self._save_results(gurobi_solver, data)
+            results = self._save_results(gurobi_solver, data)
             
         elif gurobi_solver.Status == GRB.INFEASIBLE:
             print("\n✗ 模型不可行 (Infeasible)。正在计算 IIS...")
@@ -215,6 +215,9 @@ class SmallInstanceRunner:
             
         else:
             print(f"\n✗ 求解结束，状态码: {gurobi_solver.Status}")
+            results = None
+
+        return results
 
     def _collect_results(self, model: BSTDT_Model, solve_time: float | None = None) -> dict:
         solver_model = model.m if hasattr(model, "m") else getattr(model, "model", None)
@@ -242,8 +245,93 @@ class SmallInstanceRunner:
         return results
 
     def _save_results(self, solver_model, data: ModelData, results: dict | None = None, solve_time: float | None = None):
-        if results:
-            self._save_detailed_results(results, data, solve_time or results.get('runtime', 0.0))
+        if results is None:
+            results = self._extract_results_from_solver(solver_model)
+
+        if not results:
+            print("没有可保存的求解结果")
+            return None
+
+        self._save_detailed_results(
+            results,
+            data,
+            solve_time if solve_time is not None else results.get('runtime', 0.0),
+        )
+        return results
+
+    def _extract_results_from_solver(self, solver_model) -> dict:
+        """从 Gurobi 模型对象中解析求解结果."""
+        if solver_model is None or not hasattr(solver_model, "getVars"):
+            return {}
+
+        timetables: dict = {}
+        dwell_times: dict = {}
+        first_departures: dict = {}
+
+        for var in solver_model.getVars():
+            name = var.VarName
+
+            if name.startswith("T_"):
+                parts = name.split("_")
+                if len(parts) < 4:
+                    continue
+                zone_id = parts[-1]
+                trip_id = parts[-2]
+                line_id = "_".join(parts[1:-2])
+                try:
+                    trip_int = int(trip_id)
+                except ValueError:
+                    continue
+                timetable = timetables.setdefault(line_id, {"first_departure": None, "arrival_times": {}})
+                timetable["arrival_times"][f"{zone_id}_{trip_int}"] = var.X
+
+            elif name.startswith("Z_"):
+                parts = name.split("_")
+                if len(parts) < 3:
+                    continue
+                zone_id = parts[-1]
+                line_id = "_".join(parts[1:-1])
+                dwell_times.setdefault(line_id, {})[zone_id] = var.X
+
+            elif name.startswith("X_"):
+                # X_{LineID} -> First departure
+                _, line_id = name.split("_", 1)
+                first_departures[line_id] = var.X
+
+            elif name.startswith("T[") and name.endswith("]"):
+                try:
+                    line_id, trip, zone_id = name[2:-1].split(",")
+                    timetable = timetables.setdefault(line_id, {"first_departure": None, "arrival_times": {}})
+                    timetable["arrival_times"][f"{zone_id}_{int(trip)}"] = var.X
+                except Exception:
+                    continue
+
+            elif name.startswith("Z[") and name.endswith("]"):
+                try:
+                    line_id, zone_id = name[2:-1].split(",")
+                    dwell_times.setdefault(line_id, {})[zone_id] = var.X
+                except Exception:
+                    continue
+
+            elif name.startswith("X[") and name.endswith("]"):
+                line_id = name[2:-1]
+                first_departures[line_id] = var.X
+
+        for line_id, dep_time in first_departures.items():
+            timetable = timetables.setdefault(line_id, {"first_departure": None, "arrival_times": {}})
+            timetable["first_departure"] = dep_time
+
+        return {
+            "status": getattr(solver_model, "Status", None),
+            "objective_value": getattr(solver_model, "ObjVal", None),
+            "runtime": getattr(solver_model, "Runtime", None),
+            "mip_gap": getattr(solver_model, "MIPGap", None),
+            "node_count": getattr(solver_model, "NodeCount", None),
+            "solution_count": getattr(solver_model, "SolCount", None),
+            "optimal": getattr(solver_model, "Status", None) == GRB.OPTIMAL,
+            "timetables": timetables,
+            "dwell_times": dwell_times,
+        }
 
     def _save_detailed_results(self, results: dict, data: ModelData, solve_time: float):
         """保存详细结果"""
