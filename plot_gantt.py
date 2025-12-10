@@ -5,8 +5,8 @@ import matplotlib.patches as mpatches
 
 # ================= 配置区域 =================
 # 如果你有真实的结果文件，请修改这里为 True 并指定路径
-USE_REAL_DATA = False 
-REAL_DATA_PATH = "results/small_instance/timetable.csv"  # 假设你的运行结果在这里
+USE_REAL_DATA = True
+REAL_DATA_PATH = "results/small_instance/timetable_20251203_163123.csv"  # 假设你的运行结果在这里
 
 # 指定要画哪个换乘区 (你的数据里改成了 Z2 是 L1/L2 的交集)
 TARGET_ZONE = "Z2"

@@ -2,7 +2,7 @@ import pandas as pd
 import os
 
 # 目标文件夹
-DATA_DIR = r"data_complete/data_small"
+DATA_DIR = r"data_complete/synth_data_10lines"
 
 def reduce_frequency():
     lines_path = os.path.join(DATA_DIR, "lines.csv")
