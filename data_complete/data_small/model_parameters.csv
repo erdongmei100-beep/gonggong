@@ -1,4 +1,4 @@
 parameter,value,unit,description
-planning_horizon,120.0,minutes,规划时段长度
+planning_horizon,150.0,minutes,规划时段长度
 dwell_ratio_limit,0.5,ratio,驻站时间占比上限
 big_M,1000.0,minutes,大M

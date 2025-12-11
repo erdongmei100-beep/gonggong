@@ -1,6 +1,6 @@
 line_id,headway,frequency,direction,depot_location_x,depot_location_y
-L01O,30,4,outbound,0,0
-L02O,30,4,outbound,10,10
-L03O,30,4,outbound,0,0
-L04O,30,4,outbound,10,10
-L05O,30,4,outbound,0,0
+L01O,25,6,outbound,0,0
+L02O,25,6,outbound,10,10
+L03O,25,6,outbound,0,0
+L04O,25,6,outbound,10,10
+L05O,25,6,outbound,0,0

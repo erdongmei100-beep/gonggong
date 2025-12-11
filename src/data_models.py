@@ -1,143 +1,86 @@
-"""Data structures for the BST-DT model.
-
-These classes map the CSV inputs to typed Python objects and also carry
-pre-computed helper dictionaries (travel times, zone sequences, trip
-counts) used by the optimization model.
-"""
 from dataclasses import dataclass, field
-from typing import Dict, List, Tuple
+from typing import List, Dict, Tuple, Any
 
-
+# --- 原始数据结构 (保持不变) ---
 @dataclass
-class BusLine:
-    """Basic information for a bus line."""
-
+class Line:
     line_id: str
-    headway: float
+    headway: int
     frequency: int
-    name: str = ""
-    direction: str = ""
-    depot_location_x: float = 0.0
-    depot_location_y: float = 0.0
-
+    direction: str
+    depot_x: float
+    depot_y: float
 
 @dataclass
-class BusStop:
-    """A physical bus stop assigned to a transfer zone."""
-
+class Stop:
     stop_id: str
-    zone_id: str
     name: str
-    capacity: int
-    boarding_position: int
-
-
-@dataclass
-class TransferZone:
-    """Transfer zone description."""
-
-    zone_id: str
-    name: str
-    dwelling_allowed: bool
-    max_capacity: int
-
+    lat: float
+    lon: float
+    zone_id: str  # 确保 Stop 知道自己属于哪个 Zone
 
 @dataclass
-class LineStopAssignment:
-    """Mapping between lines and stops, including ordering along the line."""
-
+class TravelTime:
     line_id: str
-    zone_id: str
-    stop_id: str
-    stop_sequence: int
-    dwell_time_allowed: bool
-    max_dwelling_time: float
-
-
-@dataclass
-class TravelTimeEntry:
-    """Travel time between successive stops (or depot to first stop)."""
-
-    line_id: str
-    from_stop_id: str
-    to_stop_id: str
-    travel_time: float
-
-
-@dataclass
-class SynchronizationPair:
-    """Synchronization parameters for a pair of lines at a transfer zone."""
-
-    line_i: str
-    line_j: str
-    zone_id: str
-    min_sync_window: float
-    max_sync_window: float
-    sync_weight: float
-    walking_time_between: float
-    sync_priority: str
-
+    from_stop: str
+    to_stop: str
+    time_min: float
+    is_transfer: bool = False
 
 @dataclass
 class ServiceConstraint:
-    """Service time windows and dwell bounds for a single line."""
-
     line_id: str
-    first_trip_min_time: float
-    first_trip_max_time: float
-    last_trip_min_time: float
-    last_trip_max_time: float
-    min_dwell_time: float
-    max_dwell_time: float
-    max_cycle_time_increase: float
-
+    first_trip_min: int
+    first_trip_max: int
+    last_trip_min: int
+    last_trip_max: int
 
 @dataclass
-class ModelParameters:
-    """Global model-level parameters."""
-
-    planning_horizon: float
-    max_dwelling_time_global: float
-    default_sync_window: float
-    station_capacity_default: float
-
+class SyncPair:
+    line_i: str
+    line_j: str
+    zone_id: str
+    min_window: int
+    max_window: int
+    weight: float
 
 @dataclass
-class ModelData:
-    """Container for all model inputs and derived structures."""
+class LineStopAssignment:
+    line_id: str
+    zone_id: str
+    stop_id: str
+    sequence: int
+    max_dwell: int
+    dwell_allowed: bool
 
-    lines: Dict[str, BusLine]
-    transfer_zones: Dict[str, TransferZone]
-    bus_stops: Dict[str, BusStop]
-    line_stop_assignments: Dict[Tuple[str, str, str], LineStopAssignment]
-    travel_times: List[TravelTimeEntry]
-    synchronization_pairs: List[SynchronizationPair]
-    service_constraints: Dict[str, ServiceConstraint]
-    model_parameters: ModelParameters
+@dataclass
+class TransferZone:
+    from_zone: str
+    to_zone: str
+    walking_time: float
 
-    # Derived structures populated by the loader
-    travel_time_map: Dict[Tuple[str, str], float] = field(default_factory=dict)
-    line_zone_sequence: Dict[str, List[str]] = field(default_factory=dict)
-    num_trips_by_line: Dict[str, int] = field(default_factory=dict)
-    base_travel_time: Dict[str, float] = field(default_factory=dict)
+# --- 核心升级：数据容器 ---
+@dataclass
+class BSTDTData:
+    """
+    不仅包含原始数据列表，还包含预计算的高速查找表 (Lookup Maps)
+    """
+    lines: List[Line] = field(default_factory=list)
+    stops: List[Stop] = field(default_factory=list)
+    travel_times: List[TravelTime] = field(default_factory=list)
+    service_constraints: List[ServiceConstraint] = field(default_factory=list)
+    sync_pairs: List[SyncPair] = field(default_factory=list)
+    line_stop_assignments: List[LineStopAssignment] = field(default_factory=list)
+    transfer_zones: List[TransferZone] = field(default_factory=list)
 
-    def __post_init__(self) -> None:
-        # Ensure zone orderings keep unique entries and are consistent with assignments
-        for line_id, seq in list(self.line_zone_sequence.items()):
-            seen = set()
-            unique_seq: List[str] = []
-            for zone_id in seq:
-                if zone_id not in seen:
-                    seen.add(zone_id)
-                    unique_seq.append(zone_id)
-            self.line_zone_sequence[line_id] = unique_seq
+    # === 高速查找表 (O(1) Access) ===
+    # 映射: (LineID, ZoneID) -> StopID
+    # 解决: "L1 在 Z2 停在这个站，而 L2 在 Z2 停在那个站" 的问题
+    map_line_zone_to_stop: Dict[Tuple[str, str], str] = field(default_factory=dict)
 
-    @property
-    def planning_horizon(self) -> float:
-        return self.model_parameters.planning_horizon
-
-    def get_zone_sequence(self, line_id: str) -> List[str]:
-        return self.line_zone_sequence.get(line_id, [])
-
-    def get_travel_time_to_zone(self, line_id: str, zone_id: str) -> float:
-        return self.travel_time_map.get((line_id, zone_id), 0.0)
+    # 映射: (FromZone, ToZone) -> WalkingTime
+    # 解决: 换乘步行时间查找
+    map_zone_transfer_time: Dict[Tuple[str, str], float] = field(default_factory=dict)
+    
+    # 映射: LineID -> Line对象 (方便查 headway)
+    map_lines: Dict[str, Line] = field(default_factory=dict)
